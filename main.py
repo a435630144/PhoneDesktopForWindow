@@ -103,6 +103,11 @@ def main() -> int:
     win32_layer.restore_native_icons()
     # 退出兜底：正常退出 / 异常退出都恢复原生桌面图标
     atexit.register(win32_layer.restore_native_icons)
+    # 2026-10-25 补：closeEvent→quitRequested→app.quit() 这条退出路径
+    # 不经过托盘 _quit() 的显式恢复，atexit 实测也不会执行（冻结包 WM_CLOSE
+    # 退出后原生图标仍隐藏）。aboutToQuit 是 Qt 一切正常退出的公共汇合点，
+    # 恢复挂这里；restore 幂等，与托盘路径/看门狗多次调用无害。
+    app.aboutToQuit.connect(win32_layer.restore_native_icons)
 
     storage = Storage()
     # v10 D3（反馈 15-a）：语言必须在**任何界面对象之前**定下来——托盘/设置/
