@@ -48,6 +48,47 @@ def _shade(c: QColor, alpha_mul: float) -> QColor:
     return out
 
 
+def _flag(value, default: bool) -> bool:
+    """只认真布尔 / 0/1 / 'true'/'false'（`bool("false")` 是 True 的坑）。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "1"):
+            return True
+        if s in ("false", "0"):
+            return False
+    return default
+
+
+def _has_color(raw) -> bool:
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        return QColor(raw.strip()).isValid()
+    except (TypeError, ValueError):
+        return False
+
+
+def liquid_enabled(settings: Optional[Dict]) -> bool:
+    """背景是不是液态玻璃（v14 反馈 10：液态玻璃 = 一种"配色"）。
+
+    与背景色同级、互斥：
+      * 显式写了 `bg_liquid` -> 听它的；
+      * 没写 -> 设过背景色的走颜色（尊重老用户的选择），没设过的走液态。
+
+    这条推导是 `resolve()` 与设置面板共用的**唯一**入口——两边各写一次
+    就会出现"面板显示开着、实际画的是颜色"。
+    """
+    s = settings if isinstance(settings, dict) else {}
+    raw = s.get("bg_liquid")
+    if raw is not None:
+        return _flag(raw, True)
+    return not _has_color(s.get("bg_color"))
+
+
 @dataclass(frozen=True)
 class Style:
     """一次绘制需要的全部颜色/尺寸（不可变，可安全缓存）。"""
@@ -60,6 +101,7 @@ class Style:
     accent: QColor
     radius: float
     custom_bg: bool = False     # 用户是否指定了背景色（预览/诊断用）
+    liquid: bool = False        # 背景 = 液态玻璃（与背景色互斥，v14 反馈 10）
 
     @property
     def tint_alpha(self) -> int:
@@ -70,7 +112,8 @@ class Style:
 
 DEFAULT_STYLE = Style(bg=None, alpha=1.0, text=QColor(theme.TEXT),
                       dim=QColor(theme.TEXT_DIM), faint=QColor(theme.TEXT_FAINT),
-                      accent=QColor(theme.ACCENT), radius=float(theme.GLASS_RADIUS))
+                      accent=QColor(theme.ACCENT), radius=float(theme.GLASS_RADIUS),
+                      liquid=True)
 
 
 def _alpha(value: Any) -> float:
@@ -119,9 +162,16 @@ def resolve(settings: Optional[Dict]) -> Style:
     accent = _color(s.get("accent_color"), theme.ACCENT)
     accent.setAlpha(255)
 
+    liquid = liquid_enabled(s)
+    if liquid:
+        # 液态玻璃与背景色互斥：选了液态就不再叠任何 tint
+        bg = None
+        custom_bg = False
+
     return Style(bg=bg, alpha=_alpha(s.get("bg_alpha", 1.0)), text=text,
                  dim=dim, faint=faint, accent=accent,
-                 radius=_radius(s.get("radius")), custom_bg=custom_bg)
+                 radius=_radius(s.get("radius")), custom_bg=custom_bg,
+                 liquid=liquid)
 
 
 def of(entry: Optional[dict]) -> Style:

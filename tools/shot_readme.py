@@ -138,10 +138,9 @@ def _storage(layout=None, widgets=None, **settings):
         "auto_clone_desktop": False,
         "show_widgets": True,
         "widgets_only": False,
-        # v14 反馈 9：液态玻璃的底图来自**实时抓屏**——出图时抓到的会是
-        # 开发者自己的桌面，不能进仓库。配图一律走传统玻璃（观感同样代表
-        # 产品），液态玻璃的效果单独用合成底图出图（tools/shot_liquid.py）。
-        "liquid_glass": False,
+        # v14 反馈 10：液态玻璃的底图是"壁纸快照"，出图时喂的是**画布壁纸**
+        # （见 `_install_shot_lens`）——既不会抓进开发者桌面，又能如实展示。
+        "liquid_glass": True,
     })
     st._data["settings"].update(settings)
     st._data["layout"] = list(layout or [])
@@ -182,6 +181,36 @@ def _wallpaper(w, h):
         _WALLPAPER_CACHE[key] = scaled.copy(x, y, tw, th)
         return _WALLPAPER_CACHE[key]
     return None
+
+
+_SHOT_BG = [None]
+
+
+def _install_shot_lens():
+    """让截图里的液态玻璃用**画布壁纸**当底图（不抓开发者桌面）。
+
+    真实运行时 `LiveLens` 按表面全局矩形从壁纸快照裁；出图脚本没有"桌面"，
+    就把整张画布当作壁纸快照，坐标系一致（窗口都摆在画布原点附近）。
+    """
+    if _SHOT_BG[0] is not None:
+        return
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QPixmap
+    from src import liquid_glass as lg
+    _SHOT_BG[0] = _blank()
+
+    def _pixmap(self, rect, radius, lens, dpr=1.0):
+        rect = QRect(rect)
+        if rect.isEmpty() or _SHOT_BG[0] is None:
+            return QPixmap()
+        m = int(lg.lens_margin(lens)) + 1
+        outer = rect.adjusted(-m, -m, m, m)
+        crop = _SHOT_BG[0].copy(int(outer.x() * DPR), int(outer.y() * DPR),
+                               int(outer.width() * DPR),
+                               int(outer.height() * DPR))
+        return lg.refract(crop, radius, lens, dpr=DPR, margin=m)
+
+    lg.LiveLens.pixmap = _pixmap
 
 
 def _blank(w=W, h=H, wallpaper=True):
@@ -927,7 +956,7 @@ def shot_folder():
         popup.close()
 
     # 右侧：这套语言里值得说清的四件事
-    tips = ["· 右上角 ○ 换文件夹颜色，图标与弹窗同步变色",
+    tips = ["· 右上角 ○ 换文件夹颜色（第一颗是液态玻璃），图标与弹窗同步",
             "· 从弹窗里把成员拖出去 = 放回桌面",
             "· 把桌面图标拖到文件夹图标上 = 并入",
             "· 弹窗里成员名直接显示，不用悬停猜",
@@ -994,19 +1023,20 @@ def shot_dock():
     p = QPainter(img)
     p.setRenderHint(QPainter.Antialiasing, True)
     _label(p, "Dock 栏：手机底部的那一排常用应用", 52, 36, 27, "#F4F7FD", True)
-    _label(p, "iOS 风格 Shelf——竖向渐变背板 + 顶部一道高光，悬停弹簧抬起、"
-              "邻居让位；液态玻璃的光学层默认叠在上面", 52, 78, 14, "#9DAABF",
+    _label(p, "iOS 风格 Shelf——悬停弹簧放大、邻居让位；开启液态玻璃后条带"
+              "背景透明，边缘把壁纸折射出一圈厚度", 52, 78, 14, "#9DAABF",
            w=1240)
 
     # 底部横向主 Dock（与右侧要点列表错开，不叠字）
     bw = int(d.size().width())
     bh = int(d.size().height())
-    dx, dy = (W - bw) // 2, 430
+    dx, dy = (W - bw) // 2, 560
     p.drawPixmap(int(dx), int(dy), pm)
     # 悬停标注：从真实 item_rect 反推第 4 个图标的中心（drawPixmap 偏移后）
     ix, _iy, iw, _ih = dockmod.item_rect(d._bar, d._position, d._m, 3)
     hx = dx + (ix - d._bar[0]) + iw // 2
-    _label(p, "悬停抬起 · 邻居让位", hx - 110, dy + bh + 18, 14, "#D7DEEA",
+    # 标注放在条带**上方**：下方离画布底太近会被裁
+    _label(p, "悬停抬起 · 邻居让位", hx - 110, dy - 32, 14, "#D7DEEA",
            w=240, shadow=True)
 
     # 左侧竖向小 Dock
@@ -1024,7 +1054,7 @@ def shot_dock():
             "   边框 / 不透明度 / 悬停倍数 / 指示点全可调",
             "· 屏幕位置四向 + 居中开关，偏移可微调",
             "· 开启后网格自动让出条带并重算行列（不重叠）",
-            "· 液态玻璃 / 渐变 Shelf 可在设置里分别开关"]
+            "· 液态玻璃在 Dock 栏设置里开关：开条带透明、关回渐变 Shelf"]
     ty = 170
     for line in tips:
         _label(p, line, 780, ty, 14, "#B9C4D6", w=620)
@@ -1056,6 +1086,7 @@ def main(argv):
     if "--only" in argv:
         want = argv[argv.index("--only") + 1]
     _isolate()
+    _install_shot_lens()
     print("出图到 %s" % OUT_DIR.relative_to(ROOT))
     for key, name, title, fn in SHOTS:
         if want and not key.startswith(want):

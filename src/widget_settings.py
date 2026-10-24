@@ -30,7 +30,7 @@ from . import i18n
 from . import theme
 from .ui_choice import ComboBox
 from .widget_registry import FieldSpec, WidgetSpec
-from .widget_style import MAX_ALPHA, MIN_ALPHA
+from .widget_style import MAX_ALPHA, MIN_ALPHA, liquid_enabled
 
 LABEL_W = 96
 DEFAULT_GROUP = "组件设置"
@@ -75,7 +75,14 @@ def field_group(group: str) -> str:
 def current_values(spec: WidgetSpec, settings: Optional[Dict]) -> Dict:
     """把 entry 里已有的设置与声明默认值合并（缺的用默认）。"""
     s = settings if isinstance(settings, dict) else {}
-    return {f.key: s.get(f.key, f.default) for f in spec.settings}
+    out = {}
+    for f in spec.settings:
+        if f.key == "bg_liquid":
+            # 推导值（没设过颜色 = 默认液态），不能让面板显示"关"但实际在画液态
+            out[f.key] = liquid_enabled(s)
+        else:
+            out[f.key] = s.get(f.key, f.default)
+    return out
 
 
 def apply_values(entry: dict, values: Dict, storage) -> None:
@@ -157,7 +164,9 @@ class ColorField(QWidget):
             self.btn.setText(self._value)
             self.btn.setStyleSheet(
                 "QPushButton{background: %s; color: %s; border: 1px solid rgba(255,255,255,40);"
-                " border-radius: 6px; font-size: 12px;}" % (c.name(), fg))
+                " border-radius: 6px; font-size: 12px;}"
+                "QPushButton:disabled{background: rgba(255,255,255,8);"
+                " color: rgba(242,243,245,88);}" % (c.name(), fg))
         else:
             self.btn.setText(i18n.T("button.follow_theme"))
             self.btn.setStyleSheet(theme.BUTTON_QSS)
@@ -234,6 +243,7 @@ class WidgetSettingsDialog(QDialog):
         # 打开时的快照：「取消」要把预览撤回去。深拷贝——settings 是嵌套 dict。
         self._snapshot = deepcopy(entry.get("settings") or {})
         self._controls: Dict[str, QWidget] = {}
+        self._holders: Dict[str, QWidget] = {}
         self.setWindowTitle(i18n.T("widget.settings_title",
                                    name=spec.display_name()))
         self.setStyleSheet(DLG_QSS)
@@ -258,6 +268,11 @@ class WidgetSettingsDialog(QDialog):
         # v10 A5：控件一改就实时预览（不落盘）。必须在表单建完之后连，
         # 否则 _build_control 里的 setChecked/setValue 会把初值当成"用户改动"。
         self._connect_live()
+        # v14 反馈 10：液态玻璃开着时禁用颜色/不透明度（两者互斥）
+        chk = self._controls.get("bg_liquid")
+        if chk is not None:
+            chk.toggled.connect(lambda _v: self._sync_liquid())
+        self._sync_liquid()
 
         btns = QHBoxLayout()
         btn_reset = QPushButton(i18n.T("button.reset_default"))
@@ -298,7 +313,19 @@ class WidgetSettingsDialog(QDialog):
             lab = QLabel(field_label(f))
             lab.setFixedWidth(LABEL_W)
             form.addRow(lab, holder)
+            self._holders[f.key] = holder
         return form
+
+    def _sync_liquid(self) -> None:
+        """液态玻璃与背景色互斥：开着就把颜色/不透明度置灰（值保留）。"""
+        chk = self._controls.get("bg_liquid")
+        if chk is None:
+            return
+        on = bool(chk.isChecked())
+        for key in ("bg_color", "bg_alpha"):
+            holder = self._holders.get(key)
+            if holder is not None:
+                holder.setEnabled(not on)
 
     # ---------- 控件 ----------
     def _build_control(self, f: FieldSpec, value) -> QWidget:

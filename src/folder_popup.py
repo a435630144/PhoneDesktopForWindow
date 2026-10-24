@@ -58,7 +58,7 @@ from . import label_style
 from . import liquid_glass
 from . import theme
 from . import win32_layer
-from .folder_tint import auto_tint, folder_tint
+from .folder_tint import LIQUID, auto_tint, folder_liquid, folder_tint
 from .iconwidget import AppIcon
 
 
@@ -399,10 +399,13 @@ class FolderPopup(QWidget):
         self._dragging = False
         self._closing = False
         self._backdrop = QPixmap()
-        # v14 反馈 9（重做）：液态玻璃底图缓存——折射只算一次，开合动画
-        # 期间按 z 缩放这张贴图（逐帧重算 40 环要 40~80ms，必卡）。
-        self._lens_pm = QPixmap()
-        self._lens_key = None
+        # v14 反馈 10：液态玻璃背景改为**实时**折射（按弹窗当前全局矩形
+        # 从壁纸快照裁），开合动画期间只缩放这一张贴图。
+        self._lens = liquid_glass.LiveLens()
+        self._wall_timer = QTimer(self)
+        self._wall_timer.setInterval(1200)
+        self._wall_timer.timeout.connect(self._check_wallpaper)
+        self._wall_timer.start()
         # v14 反馈 9 追加：悬停展开的自动关闭。鼠标既不在文件夹图标上、
         # 也不在弹窗上 -> 连丢 3 拍（~750ms）就收起。点击打开的弹窗不启用。
         self._opened_by_hover = False
@@ -659,15 +662,14 @@ class FolderPopup(QWidget):
             self._zoom_center = QPointF(self.width() / 2, self.height() / 2)
         if not keep_backdrop:
             # 玻璃背板：必须在 show() 之前抓屏，否则会把自己抓进去。
-            # v14 反馈 9（重做）：液态模式走"轻霜底图 + 边缘折射"（3px），
-            # 传统玻璃仍用 8px 重霜。
+            # 液态玻璃（文件夹颜色 = 液态）走实时壁纸快照，不需要抓屏；
+            # 选颜色的文件夹仍用 8px 重霜的传统玻璃。
             rect = QRect(self.x(), self.y(), self.width(), self.height())
-            if liquid_glass.surface_enabled(self.storage, "folder"):
-                self._backdrop = liquid_glass.grab_backdrop(rect)
+            if self._liquid_on():
+                self._backdrop = QPixmap()
+                self._lens.reset()
             else:
                 self._backdrop = effects.glass_backdrop(rect)
-            self._lens_pm = QPixmap()
-            self._lens_key = None
         top = title_h
         # 反馈 4：**居中平均排布**。两层居中——① 内容块在窗口里水平居中
         # （窗口有 240px 下限，窄内容（2 个成员）时旧实现从 x=pad/2 起排，
@@ -863,34 +865,36 @@ class FolderPopup(QWidget):
                 pass
         self.update()
 
-    # ---------- 液态玻璃背景（v14 反馈 9 重做） ----------
+    # ---------- 液态玻璃背景（v14 反馈 10：实时折射） ----------
+    def _liquid_on(self) -> bool:
+        """这个文件夹的背景是不是液态玻璃（配色 = 液态，且总闸没关）。"""
+        return (folder_liquid(self.entry)
+                and liquid_glass.surface_enabled(self.storage, "folder"))
+
     def _lens_pixmap(self) -> QPixmap:
-        """整窗矩形的折射贴图（缓存）。开合动画每帧只做一次缩放绘制。"""
+        """整窗矩形的折射贴图（按当前位置实时裁，缓存）。"""
         lens = liquid_glass.lens_style(self.storage)
-        radius = float(theme.GLASS_RADIUS)
-        key = (self.width(), self.height(), radius,
-               round(lens.strength, 4), round(lens.band, 3),
-               self._backdrop.cacheKey())
-        if self._lens_key == key and not self._lens_pm.isNull():
-            return self._lens_pm
-        w = max(1, self._backdrop.width())
-        dpr = (float(w) / max(1, self.width())) if w > 1 else 1.0
-        self._lens_pm = liquid_glass.refract(self._backdrop, radius, lens, dpr)
-        self._lens_key = key
-        return self._lens_pm
+        return self._lens.pixmap(self.geometry(), float(theme.GLASS_RADIUS),
+                                 lens,
+                                 float(self.devicePixelRatioF() or 1.0))
+
+    def _check_wallpaper(self) -> None:
+        """低频轮询：换壁纸 / 改分辨率后重画（弹窗开着时也跟）。"""
+        if not self.isVisible() or not self._liquid_on():
+            return
+        lens = liquid_glass.lens_style(self.storage)
+        if self._lens.stale(self.geometry(), float(theme.GLASS_RADIUS), lens):
+            self.update()
 
     def _paint_liquid_surface(self, p, rect, z) -> bool:
         """液态玻璃表面：透明底 + 边缘折射。返回 False = 交给普通玻璃兜底。"""
-        if not liquid_glass.surface_enabled(self.storage, "folder"):
-            return False
-        if self._backdrop.isNull():
+        if not self._liquid_on():
             return False
         pm = self._lens_pixmap()
         if pm.isNull():
             return False
         return liquid_glass.draw_refracted(
-            p, rect, theme.GLASS_RADIUS * z, pm,
-            border=liquid_glass.border_color())
+            p, rect, theme.GLASS_RADIUS * z, pm)
 
     # ---------- 悬停展开的自动关闭（v14 反馈 9 追加） ----------
     def set_opened_by_hover(self, on: bool):
@@ -938,12 +942,12 @@ class FolderPopup(QWidget):
         """
         self.hide()
         rect = QRect(self.x(), self.y(), self.width(), self.height())
-        if liquid_glass.surface_enabled(self.storage, "folder"):
-            self._backdrop = liquid_glass.grab_backdrop(rect)
+        if self._liquid_on():
+            # 液态玻璃按新位置实时裁壁纸，不需要抓屏
+            self._backdrop = QPixmap()
+            self._lens.reset()
         else:
             self._backdrop = effects.glass_backdrop(rect)
-        self._lens_pm = QPixmap()
-        self._lens_key = None
         self.show()
         self.attach_above_band()
 
@@ -994,6 +998,14 @@ class FolderPopup(QWidget):
         里的图标全部重新渲染一遍"（反馈 1 的后半句）。换色只影响弹窗背板
         的 tint 覆盖层与源图标瓷砖，`update()` 重画一次即可。
         """
+        if isinstance(color, str) and color.strip().lower() == LIQUID:
+            # v14 反馈 10：液态玻璃是色板里的一个"颜色"，与具体颜色互斥
+            self.entry["tint"] = LIQUID
+            self.storage.save()
+            self._lens.reset()
+            self.tintChanged.emit()
+            self.update()
+            return
         if color is None:
             color = self.auto_tint(self.entry.get("apps", []))
             if color is None:
@@ -1010,12 +1022,15 @@ class FolderPopup(QWidget):
             self._tint_form.hide_form()
             return
         self._close_forms()
-        try:
-            cur = QColor(self.entry.get("tint") or "")
-            if not cur.isValid():
+        if folder_liquid(self.entry):
+            cur = LIQUID                 # 当前就是液态玻璃
+        else:
+            try:
+                cur = QColor(self.entry.get("tint") or "")
+                if not cur.isValid():
+                    cur = None
+            except Exception:
                 cur = None
-        except Exception:
-            cur = None
         form = TintForm(self.storage, current=cur, parent=None)
         form.tintPicked.connect(self._set_tint)
         form.closed.connect(self._on_form_closed)
@@ -1278,13 +1293,16 @@ class FolderPopup(QWidget):
                               theme.GLASS_RADIUS * z)
         if z <= 0.55:
             return
-        # M5：色板色覆盖层（与文件夹图标同一颜色，iOS 文件夹语言）
-        tint = self.folder_tint(self.entry)
-        overlay = QColor(tint.red(), tint.green(), tint.blue(),
-                         TINT_OVERLAY_ALPHA)
-        p.setPen(Qt.NoPen)
-        p.setBrush(overlay)
-        p.drawRoundedRect(rect, theme.GLASS_RADIUS * z, theme.GLASS_RADIUS * z)
+        # M5：色板色覆盖层（与文件夹图标同一颜色，iOS 文件夹语言）。
+        # v14 反馈 10：选「液态玻璃」时没有颜色可叠——背景就是折射出来的壁纸。
+        if not self._liquid_on():
+            tint = self.folder_tint(self.entry)
+            overlay = QColor(tint.red(), tint.green(), tint.blue(),
+                             TINT_OVERLAY_ALPHA)
+            p.setPen(Qt.NoPen)
+            p.setBrush(overlay)
+            p.drawRoundedRect(rect, theme.GLASS_RADIUS * z,
+                              theme.GLASS_RADIUS * z)
         # 标题：随玻璃浮现渐显；vibrancy 规范——材质上文字提高对比、
         # 稍加字重、微加字距（不用平灰）。iOS 文件夹标题居中。
         p.setOpacity(min(1.0, (z - 0.55) / 0.35))

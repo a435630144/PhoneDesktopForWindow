@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.0.0 (v14a)**, which adds **liquid glass** (folder popups / Dock bar / widget backgrounds, each with its own switch under Settings ▸ Appearance), an **iOS-style Dock** (gradient shelf + top specular highlight + hover lift, now the default), **size-specific widget layouts** (the weather widget's 4×2 is not a scaled 2×2: it adds humidity/wind and a three-day temperature-range bar), **icon label styling** (colour / shadow / outline, 1:1 with native Windows by default) and **drag preview box styling**, plus **pure mode** (double-click empty desktop space to hide all UI), **hover-to-expand folders**, and a **default empty page** for the onboarding walkthrough. **103 test files green**. Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.0.2 (v14c)**, which turns **liquid glass** into a **real-time refraction** (the wallpaper inside the glass follows the widget as you drag it, and follows a wallpaper change without a restart; no highlights, dispersion or bright rims) and makes it **a colour choice**: pick the **transparent swatch** in the folder palette, or flip the switch in a widget's or the Dock's own settings — colour and opacity are locked while it is on. The 8.0.0 line brought the **iOS-style Dock**, **size-specific widget layouts** (the weather widget's 4×2 adds humidity/wind and a three-day temperature-range bar), **icon label styling**, **drag preview box styling**, **pure mode** and **hover-to-expand folders**. **103 test files green**. Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v8.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.0.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -30,7 +30,7 @@ Despite the name, this is **far past the prototype stage**: installer, tray resi
 | 🫥 Pure mode | **Double-click empty desktop space to hide every UI element** — wallpaper only; double-click again to bring it back |
 | 🧩 Desktop widgets | Clock / Sticky notes (editable) / Desktop panel (search · quick folders · disks · recent downloads · weather) / **System monitor** (CPU · memory · disk) / **To-do list** (multi-instance) / **Calendar** (month view with remembered month) / **Weather** (live with cache fallback; **2×2 and 4×2 are two different layouts** — the 4×2 adds humidity/wind and a three-day temperature-range bar) / **Music** (controls whatever is playing on this PC, player-agnostic, shows album art); supports **anchored (non-floating)** mode where widgets join the grid as first-class citizens, with drag-resize and icon mutual displacement |
 | 🧩 Widget library | A page inside the settings panel: browse widgets by category, search, and see four-state cards (not added / hidden / on desktop / added) with **live previews rendered by the very same `draw()`** used on the desktop; import or uninstall third-party widget zips, and appearance edits apply immediately |
-| 🧊 Liquid glass | One master switch plus per-surface switches under Settings ▸ Appearance (folder popup / Dock bar / widget background): the surface stays **transparent**, and only its rim (22 px by default) **refracts** the wallpaper behind it — strength and band width are adjustable, 0 turns it off |
+| 🧊 Liquid glass | **A colour choice** (peer of the background colour, mutually exclusive): pick the transparent swatch in the folder palette, or flip the switch in a widget's / the Dock's own settings — colour and opacity are greyed out while it is on. The surface stays **transparent**, and only its rim (24 px by default) **refracts** the wallpaper behind it in real time — it recomputes as the widget moves and follows wallpaper changes; strength and band width are adjustable, 0 turns it off |
 | 🔤 Label &amp; preview styling | A dedicated Settings ▸ Icons page: text colour / bold / shadow (with strength) / outline (width + colour), **1:1 with native Windows by default**; the drag-target preview box's border colour / fill / width / radius are configurable too (red / blue / green / orange presets) |
 | 🔀 Two modes | **Organizer mode** (native icons hidden, desktop rendering taken over) / **native mode** (free-floating): one-click switch, and each mode **keeps its own layout** independently |
 | 📱 Phone input | Settings ▸ Mode ▸ Input: single tap launches, hold 450 ms for the menu, keep dragging after the hold to move; multi-select shows a checkmark and a right-click batch menu; swipe on empty space to flip pages |
@@ -207,6 +207,14 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.0.2 (v14c) · Liquid glass: real-time refraction + a colour choice → [notes](docs/release_notes/8.0.2.md)
+
+- **Real time**: the backdrop is now a whole-desktop wallpaper snapshot cropped to each surface's global rect, so the pattern follows drags and resizes (throttled to 30 fps) and rebuilds when the wallpaper or resolution changes
+- **Refract outward**: the rim samples the world **outside** the glass (monotonic mapping, no folded colour bands); the backdrop carries an outer margin, so corners stay clean
+- **No highlight**: the rim light, dispersion, grain and sweeping highlight are gone; the outline is a 26/255 hairline (white on dark, black on light) and very bright wallpapers get a faint dark veil for legibility
+- **A colour choice**: the first swatch in the folder palette is a transparent checker bead; widgets gain a `Liquid glass` switch (colour and opacity grey out); the Dock page gains the same switch
+- **Settings tidied**: Settings ▸ Appearance keeps only the master switch plus refraction strength and band width
 
 ### 8.0.0 (v14a) · Liquid glass · iOS-style Dock · Size-specific widget layouts → [notes](docs/release_notes/8.0.0.md)
 

@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.0.0（v14a）**，本版带来**液态玻璃**（文件夹 / Dock 栏 / 小组件背景可分别开关，设置 ▸ 外观）、**iOS 风格 Dock**（渐变 Shelf + 顶部高光 + 悬停抬起，成为新默认）、**天气组件分尺寸布局**（4×2 不是 2×2 的缩放：多出湿度 / 风力与三天温程条）、**图标文字样式设置**（颜色 / 阴影 / 描边，默认 1:1 还原 Windows 原生）与**移动预览框样式自定义**，以及**纯净模式**（桌面空白处双击隐藏全部 UI）、**文件夹悬停自动展开**、**默认空分页**（新手指引）等一批交互改进。**103 个测试文件全绿**。此前的 7.1.0 含新应用图标与安装向导美化、7.0.x 含安装器自动选语言与产品改名，6.x 含音乐组件真实播放、Dock 全自定义、新手引导、组件商店与英文界面。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.0.2（v14c）**，本版把**液态玻璃**改成了**实时折射**（玻璃里的壁纸图案跟着组件位置走、换壁纸自动跟上，不再有高光 / 色散 / 描边），并让它成为**一种配色**——文件夹在色板第一颗「透明圆片」选，小组件、Dock 栏在各自设置里开关，开启时颜色不可调。此前的 8.0.0 带来 **iOS 风格 Dock**、**天气组件分尺寸布局**（4×2 多出湿度 / 风力与三天温程条）、**图标文字样式**与**移动预览框样式自定义**、**纯净模式**、**文件夹悬停自动展开** 等一批交互改进。**103 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.0.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.0.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -30,7 +30,7 @@
 | 🫥 纯净模式 | **桌面空白处双击 = 隐藏全部 UI**，只剩壁纸；再双击恢复 |
 | 🧩 桌面小组件 | 时钟 / 便签（可编辑）/ 桌面面板（搜索 · 快捷文件夹 · 磁盘 · 最近下载 · 天气）/ **系统监控**（CPU · 内存 · 磁盘）/ **待办清单**（可多实例）/ **日历**（月视图，翻月记忆）/ **天气**（实时 + 缓存降级，**2×2 与 4×2 是两套布局**：4×2 多出湿度/风力与三天温程条）/ **音乐**（控制本机正在播放，不挑播放器，读专辑封面）；支持**锚定（非悬浮）**模式，融入网格成为一等公民，可拖拽缩放、与图标互相让位 |
 | 🧩 组件库 | 设置面板里的独立分页：按分类浏览、搜索、四态卡片（未添加 / 已隐藏 / 显示中 / 已添加）与**实时预览**（预览与桌面渲染同一个 `draw()`）；支持导入 / 卸载第三方组件 zip，改了外观也能立即生效 |
-| 🧊 液态玻璃 | 设置 ▸ 外观一个总开关 + 三个表面开关（文件夹弹窗 / Dock 栏 / 小组件背景）：元素背景保持**透明**，只有边缘一圈（默认 22px）把背后的壁纸**折射**出一道扭曲带——强度与带宽可调，0 即关闭 |
+| 🧊 液态玻璃 | **一种配色**（与背景色同级、互斥）：文件夹在色板第一颗「透明圆片」选，小组件 / Dock 在各自设置里开关，开启时颜色与不透明度自动置灰。元素背景保持**透明**，只有边缘一圈（默认 24px）把背后的壁纸**实时折射**出扭曲带——位置一变就重算，换壁纸也自动跟上；强度与带宽可调，0 即关闭 |
 | 🔤 图标文字与预览框 | 设置 ▸ 图标独立分页：文字颜色 / 加粗 / 阴影（浓度可调）/ 描边（粗细 + 颜色），**默认 1:1 还原 Windows 原生**；拖动落点预览框的边框色 / 填充浓度 / 粗细 / 圆角也可自定义（内置红蓝绿橙预设） |
 | 🔀 双模式 | **整理模式**（隐藏原生图标、接管桌面渲染）/ **原生模式**（无界自由摆放）：一键切换，两种布局**各自独立保存**，互不清空 |
 | 📱 手机交互 | 设置 ▸ 模式 ▸ 交互方式：单击直接启动、按住 450ms 出菜单、按住后继续滑变成拖动；多选后图标左上角打钩，右键出批量菜单；空白处左右滑直接翻页 |
@@ -77,7 +77,7 @@
 
 <p align="center"><img src="docs/images/09-paging.gif" width="640" alt="桌面分页：左右滑动切换"></p>
 
-**Dock 栏**：手机底部那一排常用应用。iOS 风格 Shelf——竖向渐变背板 + 顶部一道高光，悬停弹簧抬起、邻居让位；开启液态玻璃后条带改为**透明背景 + 边缘折射底图**（三个表面可分别在设置 ▸ 外观里开关）
+**Dock 栏**：手机底部那一排常用应用。iOS 风格 Shelf——竖向渐变背板 + 顶部一道高光，悬停弹簧抬起、邻居让位；液态玻璃（设置 ▸ Dock 栏 ▸ 外观）开启后条带改为**透明背景 + 边缘实时折射壁纸**，此时不透明度不可调
 
 <p align="center"><img src="docs/images/08-dock.png" width="900" alt="Dock 栏：iOS 风格 Shelf + 悬停抬起 + 液态玻璃"></p>
 
@@ -208,6 +208,14 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.0.2（v14c）· 液态玻璃：实时折射 + 成为一种配色 → [发布说明](docs/release_notes/8.0.2.md)
+
+- **实时**：底图改为"整块壁纸快照 + 按表面全局矩形裁剪"，组件拖动 / 缩放时玻璃里的图案跟着走（30fps 节流），换壁纸 / 改分辨率每秒比对自动重建
+- **向外折射**：边缘采的是玻璃**外面**的图案（映射单调，不再折出色块），底图带一圈外扩，圆角自然
+- **删掉高光**：贴边亮带 / 色散 / 噪声 / 扫光全部移除；轮廓改为暗底白线、亮底黑线的 26/255 细线，亮壁纸上加一层极淡暗纱保可读
+- **成为一种配色**：文件夹色板第一颗「透明棋盘格圆片」= 液态玻璃；组件设置加「液态玻璃」开关（开启时背景色 / 不透明度置灰）；Dock 栏设置加同名开关（开启时不透明度置灰）
+- **设置收口**：设置 ▸ 外观只剩总开关 + 折射强度 + 折射带宽
 
 ### 8.0.0（v14a）· 液态玻璃 · iOS 风格 Dock · 组件分尺寸布局 → [发布说明](docs/release_notes/8.0.0.md)
 

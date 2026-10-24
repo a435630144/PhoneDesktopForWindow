@@ -17,11 +17,29 @@ from PySide6.QtGui import QColor
 
 from . import theme
 
+# 色板里的"液态玻璃"选项（v14 反馈 10）：液态玻璃与颜色**同级、互斥**，
+# 存在同一个 `entry["tint"]` 字段里——选它就是选了一种"颜色"。
+LIQUID = "liquid"
+
+# 液态玻璃文件夹的图标底色（不再是 tint 渐变，而是一块半透明玻璃）
+GLASS_FILL = QColor(255, 255, 255, 26)
+GLASS_EDGE = QColor(255, 255, 255, 92)
+
+
+def folder_liquid(entry: dict) -> bool:
+    """这个文件夹的背景是不是液态玻璃。"""
+    return str(entry.get("tint") or "").strip().lower() == LIQUID
+
 
 def folder_tint(entry: dict) -> QColor:
-    """entry 的文件夹背景色（显式 tint 优先，缺省预设第一项）。"""
+    """entry 的文件夹背景色（显式 tint 优先，缺省预设第一项）。
+
+    液态玻璃时返回白色（图标/弹窗的选中态、hover 描边都拿它当基色）。
+    """
     raw = entry.get("tint")
     if isinstance(raw, str):
+        if raw.strip().lower() == LIQUID:
+            return QColor(255, 255, 255)
         c = QColor(raw)
         if c.isValid():
             return c

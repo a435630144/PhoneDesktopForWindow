@@ -571,6 +571,23 @@ class SettingsDialog(QDialog):
         except Exception:      # noqa: BLE001
             pass
 
+    def _apply_dock_liquid(self, on):
+        """Dock 的液态玻璃开关（v14 反馈 10）：与背景不透明度互斥。"""
+        self.storage.set_setting("liquid_dock", bool(on))
+        self._sync_dock_liquid()
+        self._apply_dock_style()
+
+    def _sync_dock_liquid(self, dock_on=None):
+        """液态开着 -> 不透明度置灰（值保留，关掉后回来还是原值）。"""
+        chk = getattr(self, "chk_dock_liquid", None)
+        sld = getattr(self, "sld_dock_alpha", None)
+        if chk is None or sld is None:
+            return
+        if dock_on is None:
+            box = getattr(self, "chk_dock", None)
+            dock_on = bool(box.isChecked()) if box is not None else True
+        sld.setEnabled(bool(dock_on) and not bool(chk.isChecked()))
+
     def _apply_dock_style(self, *_):
         """Dock **外观**改动（透明度 / 圆角 / 边框 / hover / dot）。
 
@@ -677,6 +694,8 @@ class SettingsDialog(QDialog):
     def _reset_dock_style(self):
         """重置外观到出厂值。"""
         ctl = lambda name: getattr(self, name, None)  # noqa: E731
+        if ctl("chk_dock_liquid") is not None:
+            self.chk_dock_liquid.setChecked(True)
         if ctl("sld_dock_alpha") is not None:
             self.sld_dock_alpha.setValue(
                 int(round(dock.DEFAULT_ALPHA * 100)))   # DEFAULT_ALPHA
@@ -799,6 +818,9 @@ class SettingsDialog(QDialog):
                 else str(getattr(self, "_dock_border_color", "") or ""))
             self.storage.set_setting("dock_border_color",
                                      self._dock_border_color)
+        if ctl("chk_dock_liquid") is not None:
+            self.storage.set_setting("liquid_dock",
+                                     bool(self.chk_dock_liquid.isChecked()))
         self.storage.save()
         # 关掉 Dock 时，子控件一并禁用（不留"能点但无效"的旋钮）
         for name in ("cmb_dock_pos", "sp_dock_icon", "sp_dock_gap",
@@ -823,6 +845,8 @@ class SettingsDialog(QDialog):
             self.sld_dock_radius.setEnabled(
                 on and (mode or dock.normalize_radius_mode(
                     self.storage.get_setting("dock_radius_mode"))) == "round")
+        # 液态玻璃与不透明度互斥（v14 反馈 10）
+        self._sync_dock_liquid(on)
         hook = getattr(self.window, "apply_dock_settings", None)
         if hook is not None:
             hook()
@@ -1001,6 +1025,16 @@ class SettingsDialog(QDialog):
         card2, c2 = self._card(body, i18n.T("settings.dock.card_style"),
                                 reset_fn=self._reset_dock_style)
 
+        # v14 反馈 10：液态玻璃 = 一种配色（和"不透明度"互斥）。
+        # 开着时条带背景就是折射出来的壁纸，不透明度没有意义 → 置灰。
+        self.chk_dock_liquid = Switch()
+        self.chk_dock_liquid.setChecked(
+            liquid_glass.surface_enabled(self.storage, "dock"))
+        self.chk_dock_liquid.setEnabled(on)
+        self.chk_dock_liquid.toggled.connect(self._apply_dock_liquid)
+        self._row(c2, card2, i18n.T("settings.dock.liquid.title"),
+                  self.chk_dock_liquid, i18n.T("settings.dock.liquid.hint"))
+
         self.sld_dock_alpha = QSlider(Qt.Horizontal)
         self.sld_dock_alpha.setRange(30, 100)
         self.sld_dock_alpha.setValue(int(round(dock.bg_alpha(self.storage) * 100)))
@@ -1089,6 +1123,8 @@ class SettingsDialog(QDialog):
         self._row(c2, card2, i18n.T("settings.dock.dot.title"),
                   self.chk_dock_dot, i18n.T("settings.dock.dot.hint"))
         lay.addWidget(card2)
+        # 液态玻璃开着 -> 不透明度不可调（控件建完才能同步）
+        self._sync_dock_liquid(on)
 
         card3, c3 = self._card(body, i18n.T("settings.dock.card_items"))
         self.lbl_dock_count = QLabel("")
@@ -1233,35 +1269,9 @@ class SettingsDialog(QDialog):
         self._row(cq, card_lq, i18n.T("settings.appearance.liquid.master.title"),
                   self.chk_liquid, i18n.T("settings.appearance.liquid.master.hint"))
 
-        self.chk_liquid_folder = Switch()
-        self.chk_liquid_folder.setObjectName("chk_liquid_folder")
-        self.chk_liquid_folder.setChecked(
-            liquid_glass.surface_enabled(self.storage, "folder"))
-        self.chk_liquid_folder.toggled.connect(self._apply_liquid_surface)
-        self._row(cq, card_lq,
-                  i18n.T("settings.appearance.liquid.folder.title"),
-                  self.chk_liquid_folder,
-                  i18n.T("settings.appearance.liquid.folder.hint"))
-
-        self.chk_liquid_dock = Switch()
-        self.chk_liquid_dock.setObjectName("chk_liquid_dock")
-        self.chk_liquid_dock.setChecked(
-            liquid_glass.surface_enabled(self.storage, "dock"))
-        self.chk_liquid_dock.toggled.connect(self._apply_liquid_surface)
-        self._row(cq, card_lq, i18n.T("settings.appearance.liquid.dock.title"),
-                  self.chk_liquid_dock,
-                  i18n.T("settings.appearance.liquid.dock.hint"))
-
-        self.chk_liquid_widget = Switch()
-        self.chk_liquid_widget.setObjectName("chk_liquid_widget")
-        self.chk_liquid_widget.setChecked(
-            liquid_glass.surface_enabled(self.storage, "widget"))
-        self.chk_liquid_widget.toggled.connect(self._apply_liquid_surface)
-        self._row(cq, card_lq,
-                  i18n.T("settings.appearance.liquid.widget.title"),
-                  self.chk_liquid_widget,
-                  i18n.T("settings.appearance.liquid.widget.hint"))
-
+        # v14 反馈 10：液态玻璃是**每个元素自己的配色**——
+        # 文件夹在色板里选、组件在组件设置里开关、Dock 在 Dock 分页。
+        # 这里只留总闸 + 两个光学参数（强度 / 带宽）。
         self.sld_liquid_strength = self._liquid_slider(
             "liquid_strength", self._apply_liquid_strength)
         self.lbl_liquid_strength = self._liquid_value_lbl(
@@ -1551,9 +1561,7 @@ class SettingsDialog(QDialog):
     def _sync_liquid_controls(self):
         """总开关关闭时下属控件置灰（0 强度是合法值，滑条不跟着置灰）。"""
         on = bool(self.chk_liquid.isChecked())
-        for w in (self.chk_liquid_folder, self.chk_liquid_dock,
-                  self.chk_liquid_widget, self.sld_liquid_strength,
-                  self.sld_liquid_band):
+        for w in (self.sld_liquid_strength, self.sld_liquid_band):
             w.setEnabled(on)
 
     def _liquid_changed(self):
@@ -1571,17 +1579,6 @@ class SettingsDialog(QDialog):
         self._sync_liquid_controls()
         self._liquid_changed()
 
-    def _apply_liquid_surface(self, on):
-        """三个表面开关共用一个槽：按 objectName 分发到对应键。"""
-        key = {"chk_liquid_folder": "liquid_folder",
-               "chk_liquid_dock": "liquid_dock",
-               "chk_liquid_widget": "liquid_widget"}.get(
-                   self.sender().objectName())
-        if key is None:
-            return
-        self.storage.set_setting(key, bool(on))
-        self._liquid_changed()
-
     def _apply_liquid_strength(self, v):
         self.lbl_liquid_strength.setText("%d%%" % v)
         self.storage.set_setting("liquid_strength", v)
@@ -1594,20 +1591,17 @@ class SettingsDialog(QDialog):
         self._liquid_changed()
 
     def _reset_liquid(self):
-        """液态玻璃整卡回出厂（三表面全开 + 中等强度 + 22 DIP 带宽）。"""
-        defaults = (("liquid_glass", True), ("liquid_folder", True),
-                    ("liquid_dock", True), ("liquid_widget", True),
+        """液态玻璃整卡回出厂（总闸开 + 默认强度 / 带宽）。"""
+        defaults = (("liquid_glass", True),
+                    ("liquid_dock", True),
                     ("liquid_strength", liquid_glass.DEFAULT_STRENGTH),
                     ("liquid_band", liquid_glass.DEFAULT_BAND))
         for k, v in defaults:
             self.storage.set_setting(k, v)
         # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
-        for w, v in ((self.chk_liquid, True), (self.chk_liquid_folder, True),
-                     (self.chk_liquid_dock, True),
-                     (self.chk_liquid_widget, True)):
-            w.blockSignals(True)
-            w.setChecked(v)
-            w.blockSignals(False)
+        self.chk_liquid.blockSignals(True)
+        self.chk_liquid.setChecked(True)
+        self.chk_liquid.blockSignals(False)
         for sld, lbl, v in ((self.sld_liquid_strength, self.lbl_liquid_strength,
                              liquid_glass.DEFAULT_STRENGTH),
                             (self.sld_liquid_band, self.lbl_liquid_band,

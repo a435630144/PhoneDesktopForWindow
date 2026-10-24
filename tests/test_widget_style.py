@@ -59,11 +59,12 @@ def main():
     # ---------- S1 字段声明 ----------
     fields = ws.style_fields()
     keys = [f.key for f in fields]
-    check("S1a 通用外观字段是 5 项", len(fields) == 5, str(keys))
+    check("S1a 通用外观字段是 6 项（v14 反馈 10 加 bg_liquid）",
+          len(fields) == 6, str(keys))
     check("S1b 全部归入「外观」组", all(f.group == "外观" for f in fields))
-    check("S1c 含 bg_color/bg_alpha/text_color/accent_color/radius",
-          keys == ["bg_color", "bg_alpha", "text_color", "accent_color", "radius"],
-          str(keys))
+    check("S1c 液态在最前，其后 bg_color/alpha/text/accent/radius",
+          keys == ["bg_liquid", "bg_color", "bg_alpha", "text_color",
+                   "accent_color", "radius"], str(keys))
 
     # ---------- S2 每个组件都有 ----------
     missing = []

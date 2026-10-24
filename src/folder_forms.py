@@ -23,14 +23,15 @@
 键盘焦点（没有输入框），所以保持 NOACTIVATE——点了不会把用户的
 前台窗口弄掉。
 """
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QPainter,
+                           QPainterPath, QPen, QRadialGradient)
 from PySide6.QtWidgets import QColorDialog, QWidget
 
 from . import appsource
 from . import theme
 from . import win32_layer
-from .folder_tint import auto_tint
+from .folder_tint import LIQUID, auto_tint
 
 FORM_RADIUS = 14
 FORM_BG = QColor(24, 25, 30, 248)
@@ -386,8 +387,13 @@ class TintForm(FolderForm):
         self._layout_cache = self._build_cells()
 
     def _entries(self):
-        """[(key, QColor|None)]：预设色 + 「自动」 + 「自定义」。"""
-        out = [(c.name(), c) for c in theme.FOLDER_TINTS]
+        """[(key, QColor|None|"liquid")]：液态玻璃 + 预设色 + 自动 + 自定义。
+
+        v14 反馈 10：液态玻璃是**一种配色**，和具体颜色平级——所以它就排在
+        色板第一位，选了它就不再有颜色（背景直接透出壁纸）。
+        """
+        out = [(LIQUID, "liquid")]
+        out += [(c.name(), c) for c in theme.FOLDER_TINTS]
         out.append(("auto", None))
         out.append(("custom", "custom"))
         return out
@@ -406,7 +412,9 @@ class TintForm(FolderForm):
     def paint_content(self, p):
         for rect, key, color in self._layout_cache:
             hovered = (self._mouse is not None and rect.contains(self._mouse))
-            if key == "auto":
+            if key == LIQUID:
+                self._paint_liquid_swatch(p, rect)
+            elif key == "auto":
                 p.setPen(QPen(theme.TEXT_DIM, 1))
                 p.setBrush(theme.SURFACE_RAISED)
                 p.drawEllipse(QRectF(rect))
@@ -433,8 +441,49 @@ class TintForm(FolderForm):
                 p.setPen(QPen(QColor(255, 255, 255, 120), 1.5))
                 p.drawEllipse(QRectF(rect).adjusted(-1, -1, 1, 1))
 
+    def _paint_liquid_swatch(self, p, rect):
+        """液态玻璃色块：一颗通透的镜片（不是某个具体颜色）。"""
+        r = QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5)
+        c0 = QPointF(r.center().x() - r.width() * 0.12,
+                     r.center().y() - r.height() * 0.12)
+        grad = QRadialGradient(c0, max(1.0, r.width() * 0.72))
+        grad.setColorAt(0.0, QColor(255, 255, 255, 210))
+        grad.setColorAt(0.55, QColor(255, 255, 255, 120))
+        grad.setColorAt(1.0, QColor(255, 255, 255, 40))
+        # 透明底纹（灰白格）——"透明"的通用符号，一眼区别于纯色圆片
+        p.save()
+        clip = QPainterPath()
+        clip.addEllipse(r)
+        p.setClipPath(clip)
+        p.setPen(Qt.NoPen)
+        step = max(4.0, r.width() / 4.0)
+        p.fillRect(QRectF(r), QColor(212, 214, 220))
+        yy = r.top()
+        row = 0
+        while yy < r.bottom():
+            xx = r.left() + (step if row % 2 else 0)
+            while xx < r.right():
+                p.fillRect(QRectF(xx, yy, step, step), QColor(150, 153, 162))
+                xx += step * 2
+            yy += step
+            row += 1
+        # 玻璃质感：半透明白 + 左上更亮（薄透镜）
+        p.setBrush(QBrush(grad))
+        p.drawEllipse(r)
+        p.restore()
+        p.setPen(QPen(QColor(255, 255, 255, 205), 1.0))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(r)
+        # 内侧一道暗弧：镜片的厚度（不是彩色高光）
+        p.setPen(QPen(QColor(0, 0, 0, 70), 1.2))
+        inner = r.adjusted(r.width() * 0.16, r.height() * 0.16,
+                           -r.width() * 0.16, -r.height() * 0.16)
+        p.drawArc(inner, 200 * 16, 120 * 16)
+
     def _is_current(self, key, color):
         cur = self._current
+        if isinstance(cur, str):
+            return key == LIQUID
         if cur is None:
             return key == "auto"
         if not isinstance(color, QColor):
@@ -450,6 +499,10 @@ class TintForm(FolderForm):
         return None
 
     def on_pick(self, key):
+        if key == LIQUID:
+            self.tintPicked.emit(LIQUID)
+            self.hide_form()
+            return
         if key == "auto":
             self.tintPicked.emit(None)
             self.hide_form()

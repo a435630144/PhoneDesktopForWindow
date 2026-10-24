@@ -59,6 +59,11 @@ class FieldSpec:
 # v10 A4（反馈 10）：hint 只留"留空会怎样"这一句新增信息；
 # 「选色后换成该色 / 次文字派生 / 强调色用在哪」都是标签自明或实现细节。
 STYLE_FIELDS = (
+    # v14 反馈 10：液态玻璃是**一种配色**，与背景色同级、互斥。开着时
+    # 背景由壁纸实时折射（颜色/不透明度自动禁用），关掉才回到背景色。
+    # 默认 None = 按"是否设过背景色"推导（见 widget_style.liquid_enabled）。
+    FieldSpec("bg_liquid", "液态玻璃", "bool", None,
+              hint="背景透出并折射壁纸；开启时颜色不可调", group="外观"),
     FieldSpec("bg_color", "背景颜色", "color", "",
               hint="留空 = 跟随主题玻璃", group="外观"),
     FieldSpec("bg_alpha", "背景不透明度", "float", 1.0,

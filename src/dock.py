@@ -614,11 +614,13 @@ class DockWindow(QWidget):
         self._hover_index = None
         self._hover_t = 0.0
         self._anim = None
-        # v14 反馈 9（重做）：液态玻璃底图 + 折射贴图缓存。底图必须在
-        # show() 之前抓（否则把条带自己抓进去），见 `_grab_lens_backdrop`。
-        self._lens_src = QPixmap()
-        self._lens_pm = QPixmap()
-        self._lens_key = None
+        # v14 反馈 10：折射底图来自壁纸快照，按条带的**全局矩形**实时裁——
+        # 挪位置/换壁纸都自动跟上，不再"打开时抓一次"。
+        self._lens = liquid_glass.LiveLens()
+        self._wall_timer = QTimer(self)
+        self._wall_timer.setInterval(1200)
+        self._wall_timer.timeout.connect(self._check_wallpaper)
+        self._wall_timer.start()
         # 拖动排序状态
         self._press_pos = None
         self._press_index = None
@@ -669,12 +671,10 @@ class DockWindow(QWidget):
             self._avail, self._position, self._m,
             off_x=offset_x(self.storage), off_y=offset_y(self.storage),
             center=center_along_edge(self.storage))
-        # v14 反馈 9（重做）：液态玻璃要在本条带位置抓一张底图。条带挪了
-        # 位置/尺寸就得重抓，且必须趁它不可见时抓——先 hide，随后 setGeometry
-        # + show 会把它摆回原位。
-        if (liquid_glass.surface_enabled(self.storage, "dock")
-                and (self._lens_src.isNull() or tuple(self._bar) != old_bar)):
-            self._grab_lens_backdrop(QRect(*self._bar))
+        # v14 反馈 10：折射底图按实时位置从壁纸快照裁，这里不需要抓屏
+        # （旧实现要 hide → grab → show，既闪屏又只在那一刻对）。
+        if tuple(self._bar) != tuple(old_bar):
+            self._lens.reset()
         # 2026-10-23 反馈 6：位置切换必须**真的动**。旧实现只在"不可见时
         # show"，可见时依赖 setGeometry——几何是对的，但分层窗口在桌面带里
         # 被 SetWindowPos 重排过 z-order 后，Windows 偶尔会把窗口位置回退到
@@ -689,31 +689,25 @@ class DockWindow(QWidget):
         self.update()
         return self._bar
 
-    # ---------- 液态玻璃（v14 反馈 9 重做） ----------
-    def _grab_lens_backdrop(self, rect):
-        """在条带位置抓一张底图（必须在条带不可见时抓，否则抓到自己）。"""
-        was_visible = self.isVisible()
-        if was_visible:
-            self.hide()
-        self._lens_src = liquid_glass.grab_backdrop(rect)
-        self._lens_pm = QPixmap()
-        self._lens_key = None
-
+    # ---------- 液态玻璃（v14 反馈 10：实时折射） ----------
     def _lens_pixmap(self):
-        """折射贴图（缓存）：参数/底图变了才重算（一次 10~30ms）。"""
-        if self._lens_src.isNull():
-            return QPixmap()
+        """折射贴图：按条带**当前全局矩形**从壁纸快照裁（缓存 5~10ms）。"""
         lens = liquid_glass.lens_style(self.storage)
         radius = float(self._shape_radius(QRectF(self.rect())))
-        key = (self.width(), self.height(), round(radius, 2),
-               round(lens.strength, 4), round(lens.band, 3),
-               self._lens_src.cacheKey())
-        if self._lens_key == key and not self._lens_pm.isNull():
-            return self._lens_pm
-        dpr = float(self._lens_src.width()) / max(1, self.width())
-        self._lens_pm = liquid_glass.refract(self._lens_src, radius, lens, dpr)
-        self._lens_key = key
-        return self._lens_pm
+        rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+        return self._lens.pixmap(rect, radius, lens,
+                                 float(self.devicePixelRatioF() or 1.0))
+
+    def _check_wallpaper(self):
+        """低频轮询：换壁纸 / 改分辨率后重画。"""
+        if not self.isVisible() \
+                or not liquid_glass.surface_enabled(self.storage, "dock"):
+            return
+        lens = liquid_glass.lens_style(self.storage)
+        radius = float(self._shape_radius(QRectF(self.rect())))
+        rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+        if self._lens.stale(rect, radius, lens):
+            self.update()
 
     def refresh_band(self):
         """重新挂到桌面带（位置 / 外观变化后调用）。
@@ -889,7 +883,14 @@ class DockWindow(QWidget):
         bw = border_width(self.storage)
         if bw > 0:
             border = border_color(self.storage)
-            border.setAlphaF(min(1.0, 0.55 + bg_alpha(self.storage) * 0.45))
+            # v14 反馈 10：液态条带的背景是透明的，旧的不透明度推算
+            # （0.55 + alpha*0.45 常到 80%+）会变成一圈发白的描边——
+            # 那是"高光"观感，不是边框。液态时收到 16% 左右。
+            liquid_on = liquid_glass.surface_enabled(self.storage, "dock")
+            if liquid_on:
+                border.setAlphaF(min(1.0, 0.08 + bg_alpha(self.storage) * 0.12))
+            else:
+                border.setAlphaF(min(1.0, 0.55 + bg_alpha(self.storage) * 0.45))
             half = max(0.5, bw / 2.0)
             edge = QRectF(self.rect()).adjusted(half, half, -half, -half)
             r_edge = max(0.0, radius - (half - 0.5))

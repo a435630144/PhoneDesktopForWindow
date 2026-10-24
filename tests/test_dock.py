@@ -701,9 +701,12 @@ def main():
     # ---------- D27：iOS Shelf 观感（v14 反馈 5） ----------
     # 竖向渐变：顶部叠白（alpha 26）+ 一道 specular 高光，底部叠黑（alpha 26）。
     # 像素判据：条带同一段列，顶部亮带平均亮度 > 底部暗带（差 ~50，取 10 防抖）。
+    # v14 反馈 10：液态玻璃成了 Dock 的默认配色，渐变 Shelf 只在关掉液态时
+    # 才画（它是"颜色"分支的观感）——所以这条判据必须显式关掉液态。
     st27 = Storage(path=tmp / "dock27.json")
     st27.set_setting("dock_items", [])
     st27.set_setting("dock_border_width", 0)
+    st27.set_setting("liquid_dock", False)
     d27 = dock.DockWindow(st27)
     d27.resize(400, 82)
     img27 = QImage(400, 82, QImage.Format_ARGB32)
@@ -728,6 +731,23 @@ def main():
     check("D27 顶部一道 specular 高光", edge_l > top_l,
           "edge=%.1f band=%.1f" % (edge_l, top_l))
     d27.close()
+
+    # 液态开着时：背景是折射贴图，不再是那套渐变（两者互斥）
+    st27b = Storage(path=tmp / "dock27b.json")
+    st27b.set_setting("dock_items", [])
+    st27b.set_setting("dock_border_width", 0)
+    d27b = dock.DockWindow(st27b)
+    d27b.resize(400, 82)
+    img27b = QImage(400, 82, QImage.Format_ARGB32)
+    img27b.fill(0)
+    d27b.render(img27b)
+    check("D27b 液态开着 -> 不走渐变 Shelf（背景交给折射）",
+          d27b._lens.pixmap_cached.isNull()
+          or abs(_band_luma(img27b, 3, 8)
+                 - _band_luma(img27b, 74, 79)) < 40,
+          "top=%.1f bot=%.1f" % (_band_luma(img27b, 3, 8),
+                                 _band_luma(img27b, 74, 79)))
+    d27b.close()
     dlg25.deleteLater()
 
     # ---------- D22：分页点不被 Dock 遮挡（v10 反馈 25） ----------

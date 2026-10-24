@@ -152,6 +152,9 @@ BUTTON_QSS = (
     " border-radius: 8px; padding: 6px 16px; font-family: %s; font-size: 13px;}"
     "QPushButton:hover{background: %s;}"
     "QPushButton:pressed{background: %s;}"
+    # v14 反馈 10：禁用态必须看得出来（"液态玻璃开着时颜色不可调"）
+    "QPushButton:disabled{background: rgba(255,255,255,6);"
+    " color: rgba(242,243,245,88); border: 1px solid rgba(255,255,255,16);}"
 ) % (rgba(SURFACE_RAISED), rgba(BORDER), ", ".join('"%s"' % f for f in FONT_FAMILIES),
      rgba(HOVER), rgba(ACCENT_SOFT))
 
@@ -167,6 +170,9 @@ SLIDER_QSS = (
     "QSlider::groove:horizontal{height: 4px; background: %s; border-radius: 2px;}"
     "QSlider::handle:horizontal{width: 16px; height: 16px; margin: -6px 0;"
     " border-radius: 8px; background: rgb(76,194,255);}"
+    # 禁用态：手柄退成灰，滑条整体"关掉"的感觉（v14 反馈 10）
+    "QSlider::handle:horizontal:disabled{background: rgba(242,243,245,72);}"
+    "QSlider::groove:horizontal:disabled{background: rgba(255,255,255,12);}"
 ) % rgba(SURFACE_RAISED)
 
 SPIN_QSS = (

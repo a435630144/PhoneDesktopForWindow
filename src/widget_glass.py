@@ -16,12 +16,13 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QTimer, Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QLinearGradient, QPainter,
                           QPainterPath, QPen, QPixmap)
 
 from . import theme
 from . import liquid_glass
+from . import wallpaper
 from . import widget_style
 from .widget_base import FloatingWidget
 
@@ -173,6 +174,20 @@ class GlassWidget(FloatingWidget):
         `theme.TEXT`，否则"文字颜色"设置对这些组件无效。
     """
 
+    def __init__(self, storage, entry, interactive: bool = False):
+        super().__init__(storage, entry, interactive=interactive)
+        # v14 反馈 10：折射底图跟着位置/壁纸实时重算
+        self._lens = liquid_glass.LiveLens()
+        self._lens_throttle = liquid_glass.Throttle()
+        self._lens_timer = QTimer(self)
+        self._lens_timer.setSingleShot(True)
+        self._lens_timer.timeout.connect(self.update)
+        # 壁纸轮询：1.2s 一次版本比对（读注册表有 0.4s 缓存，几乎不耗）
+        self._wall_timer = QTimer(self)
+        self._wall_timer.setInterval(1200)
+        self._wall_timer.timeout.connect(self._check_wallpaper)
+        self._wall_timer.start()
+
     def _style(self):
         """取（并缓存）外观样式；设置变更时 `on_settings_changed` 清缓存。"""
         st = getattr(self, "_style_cache", None)
@@ -186,46 +201,84 @@ class GlassWidget(FloatingWidget):
         return self._style()
 
     def prepare_lens_backdrop(self):
-        """抓一块底图供液态玻璃折射（**必须在 show() 之前**调用）。
+        """预热壁纸快照（**必须在 show() 之前**调用的历史接口）。
 
-        组件是常驻表面，逐帧抓屏 + 逐像素位移都不可行（v8 C2 的结论不变）；
-        这里只在创建时抓一次，之后靠缓存，位置变了才重抓。
+        v14 反馈 10 起折射底图不再按组件抓屏，而是从整块壁纸快照里按位置
+        裁——这里只负责把快照建出来（首帧 100~200ms，别让它落在第一次
+        paintEvent 里），组件怎么移动都自动跟。
         """
-        if not liquid_glass.surface_enabled(self.storage, "widget"):
-            self._lens_src = QPixmap()
+        if not self._liquid_on():
+            self._lens.reset()
             return
-        self._lens_src = liquid_glass.grab_backdrop(self.geometry())
-        self._lens_pm = QPixmap()
-        self._lens_key = None
+        try:
+            wallpaper.snapshot()
+        except Exception:          # noqa: BLE001 —— 壁纸读不到就走抓屏兜底
+            pass
+
+    def _liquid_on(self) -> bool:
+        """本组件的背景是不是液态玻璃（配色开关 + 全局总闸）。"""
+        try:
+            on = bool(self.style.liquid)
+        except Exception:          # noqa: BLE001
+            on = False
+        return on and liquid_glass.master_enabled(self.storage)
+
+    def _card_global_rect(self) -> QRect:
+        """卡片在屏幕上的矩形（折射要按"玻璃实际在哪"取底图）。"""
+        card = self.card_rect()
+        return QRect(self.mapToGlobal(card.topLeft()), card.size())
 
     def _lens_pixmap(self, radius: float) -> QPixmap:
-        """折射贴图（缓存）：尺寸/参数/底图变化才重算。"""
-        src = getattr(self, "_lens_src", None)
-        if src is None or src.isNull():
-            return QPixmap()
+        """折射贴图（缓存）：位置 / 壁纸版本 / 参数变了才重算。"""
         lens = liquid_glass.lens_style(self.storage)
-        key = (self.width(), self.height(), round(float(radius), 2),
-               round(lens.strength, 4), round(lens.band, 3), src.cacheKey())
-        if getattr(self, "_lens_key", None) == key \
-                and not getattr(self, "_lens_pm", QPixmap()).isNull():
-            return self._lens_pm
-        dpr = float(src.width()) / max(1, self.width())
-        self._lens_pm = liquid_glass.refract(src, radius, lens, dpr)
-        self._lens_key = key
-        return self._lens_pm
+        return self._lens.pixmap(self._card_global_rect(), radius, lens,
+                                 float(self.devicePixelRatioF() or 1.0))
+
+    def _queue_lens_refresh(self) -> None:
+        """位置/尺寸变了：把重算压到 ~30fps（拖动时别把主线程拖满）。
+
+        构造期 `FloatingWidget.__init__` 里的 resize/move 也会走到这里，
+        那时计时器还没建——一律 getattr 兜底，缺了就直通重绘。
+        """
+        if getattr(self, "_lens", None) is None or not self._liquid_on():
+            return
+        throttle = getattr(self, "_lens_throttle", None)
+        timer = getattr(self, "_lens_timer", None)
+        if throttle is None or timer is None:
+            return
+        if throttle.ready():
+            self.update()
+            return
+        # 本帧不允许重算 -> 补一个"到点重绘"，拖动停下后还能跟上最后一格
+        timer.start(throttle.due_ms())
+
+    def _check_wallpaper(self) -> None:
+        """低频轮询壁纸版本：换了壁纸 / 改了分辨率，玻璃跟着换。"""
+        if not self._liquid_on() or not self.isVisible():
+            return
+        lens = liquid_glass.lens_style(self.storage)
+        if self._lens.stale(self._card_global_rect(), self.style.radius, lens):
+            self.update()
+
+    def moveEvent(self, e):
+        super().moveEvent(e)
+        self._queue_lens_refresh()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._queue_lens_refresh()
 
     def _paint_surface(self, p):
         st = self.style
         # v10 A8：玻璃画在**卡片**矩形上——编辑态窗口外扩了一圈，玻璃
         # 必须留在卡片位置，外扩区只保留 alpha=2 的命中填充。
         card = QRectF(self.card_rect())
-        # v14 反馈 9（重做）：液态玻璃 = 透明底 + 边缘折射的底图。
-        # 没抓到 / 没开时走原来的静态玻璃（观感不跳变，只是没有折射）。
-        if liquid_glass.surface_enabled(self.storage, "widget"):
+        # v14 反馈 10：液态玻璃 = 透明底 + **实时**折射的壁纸。
+        # 开没开由配色决定（st.liquid），不再是全局开关说了算。
+        if self._liquid_on():
             pm = self._lens_pixmap(st.radius)
             if not pm.isNull() and liquid_glass.draw_refracted(
-                    p, card, st.radius, pm,
-                    border=liquid_glass.border_color()):
+                    p, card, st.radius, pm):
                 return
         paint_glass(p, card, st.radius,
                     tint_alpha=st.tint_alpha, tint_color=st.bg)
@@ -236,6 +289,5 @@ class GlassWidget(FloatingWidget):
     def on_settings_changed(self):
         """组件设置应用后的回调（默认清样式缓存 + 重绘）。"""
         self._style_cache = None
-        self._lens_pm = QPixmap()      # 折射参数可能变了，贴图重算
-        self._lens_key = None
+        self._lens.reset()             # 配色/参数可能变了，折射贴图重算
         self.update()

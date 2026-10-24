@@ -39,7 +39,7 @@ from . import drag_merge
 from . import effects
 from . import interaction
 from . import label_style as _ls
-from .folder_tint import folder_tint
+from .folder_tint import folder_liquid, folder_tint
 from .stepper import Stepper
 from . import theme
 from .storage import entry_app
@@ -571,20 +571,32 @@ class AppIcon(QWidget):
         else:
             box = QRectF(3, 3, s - 6, s - 6)
         tint = folder_tint(self.entry)
-        grad = QLinearGradient(0, box.top(), 0, box.bottom())
-        grad.setColorAt(0.0, tint.lighter(135))
-        grad.setColorAt(1.0, tint.darker(165))
-        p.setPen(QPen(theme.FOLDER_BORDER, 1))
-        p.setBrush(QBrush(grad))
-        p.drawRoundedRect(box, s * 0.24, s * 0.24)
-        # 顶部内高光（光线打在瓷砖上沿，与玻璃 specular 同语言）
-        hl = QLinearGradient(box.left() + s * 0.18, 0, box.right() - s * 0.18, 0)
-        hl.setColorAt(0.0, QColor(255, 255, 255, 0))
-        hl.setColorAt(0.5, theme.FOLDER_HILIGHT)
-        hl.setColorAt(1.0, QColor(255, 255, 255, 0))
-        p.setPen(QPen(QBrush(hl), 1.0))
-        p.drawLine(QPointF(box.left() + s * 0.16, box.top() + 1.2),
-                   QPointF(box.right() - s * 0.16, box.top() + 1.2))
+        liquid = folder_liquid(self.entry)
+        if liquid:
+            # v14 反馈 10：文件夹颜色选「液态玻璃」——瓷砖本身也是一块玻璃
+            # （半透明白 + 细边），与弹窗的折射背景同一语言
+            grad = QLinearGradient(0, box.top(), 0, box.bottom())
+            grad.setColorAt(0.0, QColor(255, 255, 255, 58))
+            grad.setColorAt(1.0, QColor(255, 255, 255, 22))
+            p.setPen(QPen(QColor(255, 255, 255, 104), 1))
+            p.setBrush(QBrush(grad))
+            p.drawRoundedRect(box, s * 0.24, s * 0.24)
+        else:
+            grad = QLinearGradient(0, box.top(), 0, box.bottom())
+            grad.setColorAt(0.0, tint.lighter(135))
+            grad.setColorAt(1.0, tint.darker(165))
+            p.setPen(QPen(theme.FOLDER_BORDER, 1))
+            p.setBrush(QBrush(grad))
+            p.drawRoundedRect(box, s * 0.24, s * 0.24)
+            # 顶部内高光（光线打在瓷砖上沿，与玻璃 specular 同语言）
+            hl = QLinearGradient(box.left() + s * 0.18, 0,
+                                 box.right() - s * 0.18, 0)
+            hl.setColorAt(0.0, QColor(255, 255, 255, 0))
+            hl.setColorAt(0.5, theme.FOLDER_HILIGHT)
+            hl.setColorAt(1.0, QColor(255, 255, 255, 0))
+            p.setPen(QPen(QBrush(hl), 1.0))
+            p.drawLine(QPointF(box.left() + s * 0.16, box.top() + 1.2),
+                       QPointF(box.right() - s * 0.16, box.top() + 1.2))
         members = self.entry.get("apps", [])
         n = len(members)
         # v7 B5 反馈 13（2026-10-21）：比例改 0.42 / 0.34 / 0.30（1 / 2 / 3-4
