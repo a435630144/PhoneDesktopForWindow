@@ -1833,6 +1833,9 @@ class DesktopWindow(QWidget):
         icon.activated.connect(self._on_activate)
         icon.clicked.connect(self._on_icon_clicked)
         icon.folderClicked.connect(self.open_folder)
+        # v14：悬停展开走独立入口——弹窗记「悬停打开」，鼠标离开后自动关
+        icon.folderHoverOpened.connect(
+            lambda eid: self.open_folder(eid, by_hover=True))
         icon.mergeRequested.connect(self._on_merge)
         icon.removeRequested.connect(self._on_remove_entry)
         icon.dissolveRequested.connect(self._on_dissolve)
@@ -3164,7 +3167,7 @@ class DesktopWindow(QWidget):
         self.storage.remove_entry(other["id"])
 
     # ---------- 文件夹弹窗 ----------
-    def open_folder(self, entry_id):
+    def open_folder(self, entry_id, by_hover: bool = False):
         entry = self.storage.find_entry(entry_id)
         if not entry or entry.get("type") != "folder":
             return
@@ -3179,6 +3182,9 @@ class DesktopWindow(QWidget):
             # 传图标完整全局矩形：液态玻璃弹窗的展开动画起点
             anchor_rect = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
         popup = FolderPopup(self.storage, entry, anchor_rect)
+        # v14：悬停展开的弹窗在鼠标离开图标与弹窗后自动收起；点击打开的
+        # 弹窗保持原行为（用户是主动要用它，不该自己消失）
+        popup.set_opened_by_hover(by_hover)
         popup.launchApp.connect(self._on_activate)
         popup.extractRequested.connect(self._on_extract)
         popup.removeMember.connect(self._on_remove_member)

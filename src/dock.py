@@ -37,7 +37,7 @@ from typing import NamedTuple
 from PySide6.QtCore import (QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRect,
                             QRectF, Qt, QTimer, Property, Signal)
 from PySide6.QtGui import (QBrush, QColor, QLinearGradient, QPainter,
-                           QPainterPath, QPen)
+                           QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import QWidget
 
 from . import appsource, effects, liquid_glass, theme, win32_layer
@@ -614,6 +614,11 @@ class DockWindow(QWidget):
         self._hover_index = None
         self._hover_t = 0.0
         self._anim = None
+        # v14 反馈 9（重做）：液态玻璃底图 + 折射贴图缓存。底图必须在
+        # show() 之前抓（否则把条带自己抓进去），见 `_grab_lens_backdrop`。
+        self._lens_src = QPixmap()
+        self._lens_pm = QPixmap()
+        self._lens_key = None
         # 拖动排序状态
         self._press_pos = None
         self._press_index = None
@@ -659,10 +664,17 @@ class DockWindow(QWidget):
             self.hide()
             self._bar = (0, 0, 0, 0)
             return self._bar
+        old_bar = self._bar
         self._bar = bar_rect(
             self._avail, self._position, self._m,
             off_x=offset_x(self.storage), off_y=offset_y(self.storage),
             center=center_along_edge(self.storage))
+        # v14 反馈 9（重做）：液态玻璃要在本条带位置抓一张底图。条带挪了
+        # 位置/尺寸就得重抓，且必须趁它不可见时抓——先 hide，随后 setGeometry
+        # + show 会把它摆回原位。
+        if (liquid_glass.surface_enabled(self.storage, "dock")
+                and (self._lens_src.isNull() or tuple(self._bar) != old_bar)):
+            self._grab_lens_backdrop(QRect(*self._bar))
         # 2026-10-23 反馈 6：位置切换必须**真的动**。旧实现只在"不可见时
         # show"，可见时依赖 setGeometry——几何是对的，但分层窗口在桌面带里
         # 被 SetWindowPos 重排过 z-order 后，Windows 偶尔会把窗口位置回退到
@@ -676,6 +688,32 @@ class DockWindow(QWidget):
             self.update(self.rect())
         self.update()
         return self._bar
+
+    # ---------- 液态玻璃（v14 反馈 9 重做） ----------
+    def _grab_lens_backdrop(self, rect):
+        """在条带位置抓一张底图（必须在条带不可见时抓，否则抓到自己）。"""
+        was_visible = self.isVisible()
+        if was_visible:
+            self.hide()
+        self._lens_src = liquid_glass.grab_backdrop(rect)
+        self._lens_pm = QPixmap()
+        self._lens_key = None
+
+    def _lens_pixmap(self):
+        """折射贴图（缓存）：参数/底图变了才重算（一次 10~30ms）。"""
+        if self._lens_src.isNull():
+            return QPixmap()
+        lens = liquid_glass.lens_style(self.storage)
+        radius = float(self._shape_radius(QRectF(self.rect())))
+        key = (self.width(), self.height(), round(radius, 2),
+               round(lens.strength, 4), round(lens.band, 3),
+               self._lens_src.cacheKey())
+        if self._lens_key == key and not self._lens_pm.isNull():
+            return self._lens_pm
+        dpr = float(self._lens_src.width()) / max(1, self.width())
+        self._lens_pm = liquid_glass.refract(self._lens_src, radius, lens, dpr)
+        self._lens_key = key
+        return self._lens_pm
 
     def refresh_band(self):
         """重新挂到桌面带（位置 / 外观变化后调用）。
@@ -817,28 +855,35 @@ class DockWindow(QWidget):
         # v10 A9：背景不透明度可调（0.30~1.0）——桌面壁纸透出来多少由用户定
         bg = QColor(theme.SURFACE)
         bg.setAlphaF(bg_alpha(self.storage))
-        # v14 反馈 5：iOS 的 Shelf 不是一块实色，而是**上亮下暗的竖向渐变**
-        # + 顶部一道 specular 高光。实色块在 0.62 透明度下会显"脏"，渐变能
-        # 把透明度还原成"玻璃"的观感。
-        p.fillPath(path, bg)
-        p.save()
-        p.setClipPath(path)
-        grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        top = QColor(255, 255, 255, 26)
-        bottom = QColor(0, 0, 0, 26)
-        grad.setColorAt(0.0, top)
-        grad.setColorAt(0.55, QColor(255, 255, 255, 6))
-        grad.setColorAt(1.0, bottom)
-        p.fillRect(rect, grad)
-        # 顶部 specular：两端渐隐（与组件玻璃 / 文件夹弹窗同一语言）
-        hi = QLinearGradient(rect.topLeft(), rect.topRight())
-        hi.setColorAt(0.0, QColor(255, 255, 255, 0))
-        hi.setColorAt(0.5, QColor(255, 255, 255, 46))
-        hi.setColorAt(1.0, QColor(255, 255, 255, 0))
-        p.setPen(QPen(QBrush(hi), 1.2))
-        p.drawLine(QPointF(rect.left() + radius * 0.6, rect.top() + 1.0),
-                   QPointF(rect.right() - radius * 0.6, rect.top() + 1.0))
-        p.restore()
+        # v14 反馈 9（重做）：液态玻璃表面 = 透明底 + 边缘折射的底图。
+        # 旧实现（渐变 + specular + 色散 + 扫光）已删除——用户要的是"透过
+        # 玻璃看到壁纸在边缘被折射"，不是一层高光。
+        lens_pm = (self._lens_pixmap()
+                   if liquid_glass.surface_enabled(self.storage, "dock")
+                   else QPixmap())
+        if not lens_pm.isNull():
+            liquid_glass.draw_refracted(p, rect, radius, lens_pm)
+        else:
+            # 兜底：没抓到底图（首帧 / 抓屏失败）仍画 iOS Shelf 渐变
+            p.fillPath(path, bg)
+            p.save()
+            p.setClipPath(path)
+            grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+            top = QColor(255, 255, 255, 26)
+            bottom = QColor(0, 0, 0, 26)
+            grad.setColorAt(0.0, top)
+            grad.setColorAt(0.55, QColor(255, 255, 255, 6))
+            grad.setColorAt(1.0, bottom)
+            p.fillRect(rect, grad)
+            # 顶部 specular：两端渐隐（与组件玻璃 / 文件夹弹窗同一语言）
+            hi = QLinearGradient(rect.topLeft(), rect.topRight())
+            hi.setColorAt(0.0, QColor(255, 255, 255, 0))
+            hi.setColorAt(0.5, QColor(255, 255, 255, 46))
+            hi.setColorAt(1.0, QColor(255, 255, 255, 0))
+            p.setPen(QPen(QBrush(hi), 1.2))
+            p.drawLine(QPointF(rect.left() + radius * 0.6, rect.top() + 1.0),
+                       QPointF(rect.right() - radius * 0.6, rect.top() + 1.0))
+            p.restore()
         # 边框（v10 反馈 27）：粗细 0~4 + 颜色可调。路径按 粗细/2 内缩，
         # 否则粗边框有一半画到窗口外被裁掉，看起来比设置值细。
         bw = border_width(self.storage)
@@ -855,12 +900,8 @@ class DockWindow(QWidget):
             p.drawPath(edge_path)
             p.setBrush(Qt.NoBrush)
 
-        # v14 反馈 9：液态玻璃光学叠加层——画在 Shelf 之上、图标之下，
-        # 色散/透镜边只镶边框一圈，不会盖住图标本体。
-        if liquid_glass.surface_enabled(self.storage, "dock"):
-            liquid_glass.paint_overlay(
-                p, rect, radius, liquid_glass.liquid_style(self.storage),
-                phase=liquid_glass.shimmer_phase(), widget=self)
+        # v14 反馈 9（重做）：折射层已作为背景画在 Shelf 位置，这里不再叠加
+        # 任何光学层（旧的高光/色散/扫光已删除）。
 
         if not self._items:
             self._paint_empty_hint(p, rect)

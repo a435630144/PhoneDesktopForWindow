@@ -1262,43 +1262,28 @@ class SettingsDialog(QDialog):
                   self.chk_liquid_widget,
                   i18n.T("settings.appearance.liquid.widget.hint"))
 
-        self.sld_liquid_dispersion = self._liquid_slider(
-            "liquid_dispersion", self._apply_liquid_dispersion)
-        self.lbl_liquid_dispersion = self._liquid_value_lbl(
-            self.sld_liquid_dispersion)
-        dsp_box = self._liquid_slider_box(self.sld_liquid_dispersion,
-                                          self.lbl_liquid_dispersion)
+        self.sld_liquid_strength = self._liquid_slider(
+            "liquid_strength", self._apply_liquid_strength)
+        self.lbl_liquid_strength = self._liquid_value_lbl(
+            self.sld_liquid_strength)
+        stg_box = self._liquid_slider_box(self.sld_liquid_strength,
+                                          self.lbl_liquid_strength)
         self._row(cq, card_lq,
-                  i18n.T("settings.appearance.liquid.dispersion.title"),
-                  dsp_box,
-                  i18n.T("settings.appearance.liquid.dispersion.hint"))
+                  i18n.T("settings.appearance.liquid.strength.title"), stg_box,
+                  i18n.T("settings.appearance.liquid.strength.hint"))
 
-        self.sld_liquid_bezel = self._liquid_slider(
-            "liquid_bezel", self._apply_liquid_bezel)
-        self.lbl_liquid_bezel = self._liquid_value_lbl(self.sld_liquid_bezel)
-        bzl_box = self._liquid_slider_box(self.sld_liquid_bezel,
-                                          self.lbl_liquid_bezel)
+        # 折射带宽是 DIP 值（6~40），和强度（0~100%）分开一个量纲
+        self.sld_liquid_band = self._liquid_slider(
+            "liquid_band", self._apply_liquid_band,
+            lo=liquid_glass.BAND_MIN, hi=liquid_glass.BAND_MAX,
+            suffix=i18n.T("settings.appearance.liquid.unit_px"))
+        self.lbl_liquid_band = self._liquid_value_lbl(
+            self.sld_liquid_band, suffix=i18n.T("settings.appearance.liquid.unit_px"))
+        bnd_box = self._liquid_slider_box(self.sld_liquid_band,
+                                          self.lbl_liquid_band)
         self._row(cq, card_lq,
-                  i18n.T("settings.appearance.liquid.bezel.title"), bzl_box,
-                  i18n.T("settings.appearance.liquid.bezel.hint"))
-
-        self.sld_liquid_noise = self._liquid_slider(
-            "liquid_noise", self._apply_liquid_noise)
-        self.lbl_liquid_noise = self._liquid_value_lbl(self.sld_liquid_noise)
-        nse_box = self._liquid_slider_box(self.sld_liquid_noise,
-                                          self.lbl_liquid_noise)
-        self._row(cq, card_lq,
-                  i18n.T("settings.appearance.liquid.noise.title"), nse_box,
-                  i18n.T("settings.appearance.liquid.noise.hint"))
-
-        self.chk_liquid_shimmer = Switch()
-        self.chk_liquid_shimmer.setChecked(
-            liquid_glass.liquid_style(self.storage).shimmer)
-        self.chk_liquid_shimmer.toggled.connect(self._apply_liquid_shimmer)
-        self._row(cq, card_lq,
-                  i18n.T("settings.appearance.liquid.shimmer.title"),
-                  self.chk_liquid_shimmer,
-                  i18n.T("settings.appearance.liquid.shimmer.hint"))
+                  i18n.T("settings.appearance.liquid.band.title"), bnd_box,
+                  i18n.T("settings.appearance.liquid.band.hint"))
         lay.addWidget(card_lq)
         self._sync_liquid_controls()
 
@@ -1536,21 +1521,22 @@ class SettingsDialog(QDialog):
         self.sp_label_outline_w.setEnabled(outline_on)
         self.btn_label_outline_color.setEnabled(outline_on)
 
-    # ---------- 液态玻璃（v14 反馈 9） ----------
-    def _liquid_slider(self, key, slot):
+    # ---------- 液态玻璃（v14 反馈 9，重做：透明底 + 边缘折射） ----------
+    def _liquid_slider(self, key, slot, lo=0, hi=100, suffix="%"):
         sld = QSlider(Qt.Horizontal)
-        sld.setRange(0, 100)
+        sld.setRange(lo, hi)
         sld.setFixedWidth(150)
         sld.setStyleSheet(theme.SLIDER_QSS)
         sld.setValue(int(self.storage.get_setting(key) or 0))
         sld.valueChanged.connect(slot)
         sld.sliderReleased.connect(self._flush_storage)
+        sld._liquid_suffix = suffix
         return sld
 
-    def _liquid_value_lbl(self, sld):
-        lbl = QLabel("%d%%" % sld.value())
+    def _liquid_value_lbl(self, sld, suffix="%"):
+        lbl = QLabel("%d%s" % (sld.value(), suffix))
         lbl.setObjectName("rowHint")
-        lbl.setFixedWidth(40)
+        lbl.setFixedWidth(48)
         return lbl
 
     def _liquid_slider_box(self, sld, lbl):
@@ -1566,9 +1552,8 @@ class SettingsDialog(QDialog):
         """总开关关闭时下属控件置灰（0 强度是合法值，滑条不跟着置灰）。"""
         on = bool(self.chk_liquid.isChecked())
         for w in (self.chk_liquid_folder, self.chk_liquid_dock,
-                  self.chk_liquid_widget, self.sld_liquid_dispersion,
-                  self.sld_liquid_bezel, self.sld_liquid_noise,
-                  self.chk_liquid_shimmer):
+                  self.chk_liquid_widget, self.sld_liquid_strength,
+                  self.sld_liquid_band):
             w.setEnabled(on)
 
     def _liquid_changed(self):
@@ -1597,49 +1582,40 @@ class SettingsDialog(QDialog):
         self.storage.set_setting(key, bool(on))
         self._liquid_changed()
 
-    def _apply_liquid_dispersion(self, v):
-        self.lbl_liquid_dispersion.setText("%d%%" % v)
-        self.storage.set_setting("liquid_dispersion", v)
+    def _apply_liquid_strength(self, v):
+        self.lbl_liquid_strength.setText("%d%%" % v)
+        self.storage.set_setting("liquid_strength", v)
         self._liquid_changed()
 
-    def _apply_liquid_bezel(self, v):
-        self.lbl_liquid_bezel.setText("%d%%" % v)
-        self.storage.set_setting("liquid_bezel", v)
-        self._liquid_changed()
-
-    def _apply_liquid_noise(self, v):
-        self.lbl_liquid_noise.setText("%d%%" % v)
-        self.storage.set_setting("liquid_noise", v)
-        self._liquid_changed()
-
-    def _apply_liquid_shimmer(self, on):
-        self.storage.set_setting("liquid_shimmer", bool(on))
+    def _apply_liquid_band(self, v):
+        self.lbl_liquid_band.setText(
+            "%d%s" % (v, i18n.T("settings.appearance.liquid.unit_px")))
+        self.storage.set_setting("liquid_band", v)
         self._liquid_changed()
 
     def _reset_liquid(self):
-        """液态玻璃整卡回出厂（三表面全开 + 中等强度 + 扫光开）。"""
+        """液态玻璃整卡回出厂（三表面全开 + 中等强度 + 22 DIP 带宽）。"""
         defaults = (("liquid_glass", True), ("liquid_folder", True),
                     ("liquid_dock", True), ("liquid_widget", True),
-                    ("liquid_dispersion", 60), ("liquid_bezel", 60),
-                    ("liquid_noise", 40), ("liquid_shimmer", True))
+                    ("liquid_strength", liquid_glass.DEFAULT_STRENGTH),
+                    ("liquid_band", liquid_glass.DEFAULT_BAND))
         for k, v in defaults:
             self.storage.set_setting(k, v)
         # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
         for w, v in ((self.chk_liquid, True), (self.chk_liquid_folder, True),
                      (self.chk_liquid_dock, True),
-                     (self.chk_liquid_widget, True),
-                     (self.chk_liquid_shimmer, True)):
+                     (self.chk_liquid_widget, True)):
             w.blockSignals(True)
             w.setChecked(v)
             w.blockSignals(False)
-        for sld, lbl, v in ((self.sld_liquid_dispersion,
-                             self.lbl_liquid_dispersion, 60),
-                            (self.sld_liquid_bezel, self.lbl_liquid_bezel, 60),
-                            (self.sld_liquid_noise, self.lbl_liquid_noise, 40)):
+        for sld, lbl, v in ((self.sld_liquid_strength, self.lbl_liquid_strength,
+                             liquid_glass.DEFAULT_STRENGTH),
+                            (self.sld_liquid_band, self.lbl_liquid_band,
+                             liquid_glass.DEFAULT_BAND)):
             sld.blockSignals(True)
             sld.setValue(v)
             sld.blockSignals(False)
-            lbl.setText("%d%%" % v)
+            lbl.setText("%d%s" % (v, sld._liquid_suffix))
         self._sync_liquid_controls()
         self._liquid_changed()
 
@@ -1893,6 +1869,17 @@ class SettingsDialog(QDialog):
         fh.addWidget(self.sp_folder_rows)
         self._row(c, card, i18n.T("settings.layout.folder_default.title"), fbox,
                   i18n.T("settings.layout.folder_default.hint"))
+
+        # v14：文件夹悬停自动展开（原来藏在「模式」页的同步卡片里，找不到）。
+        # 悬停展开的弹窗在鼠标离开图标与弹窗后会自动收起，点击打开的不受
+        # 影响——这一条写进 hint，用户不必试才知道。
+        self.chk_hover_folder = Switch()
+        self.chk_hover_folder.setChecked(
+            bool(self.storage.get_setting("folder_hover_expand")))
+        self.chk_hover_folder.toggled.connect(self._apply_folder_hover)
+        self._row(c, card, i18n.T("settings.layout.folder_hover.title"),
+                  self.chk_hover_folder,
+                  i18n.T("settings.layout.folder_hover.hint"))
         lay.addWidget(card)
 
         card, c = self._card(body, i18n.T("settings.layout.card.paging"))
@@ -1990,12 +1977,7 @@ class SettingsDialog(QDialog):
                   self.chk_autosync, i18n.T("settings.mode.auto_sync.hint"))
 
         # v14 反馈 1：文件夹悬停自动展开
-        self.chk_hover_folder = Switch()
-        self.chk_hover_folder.setChecked(
-            bool(self.storage.get_setting("folder_hover_expand")))
-        self.chk_hover_folder.toggled.connect(self._apply_folder_hover)
-        self._row(c, card, i18n.T("settings.mode.folder_hover.title"),
-                  self.chk_hover_folder, i18n.T("settings.mode.folder_hover.hint"))
+        # （v14 追加：已移到「布局与网格 ▸ 文件夹」卡——那里才是文件夹设置）
         lay.addWidget(card)
 
     def _page_developer(self, body, lay):

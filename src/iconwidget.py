@@ -149,6 +149,8 @@ class AppIcon(QWidget):
     activated = Signal(dict)            # 双击启动
     clicked = Signal(str)               # 单击选中（entry id）
     folderClicked = Signal(str)         # 单击文件夹（entry id）
+    folderHoverOpened = Signal(str)     # 悬停自动展开（v14：与点击分开，
+                                        # 悬停展开的弹窗鼠标离开后自动关）
     mergeRequested = Signal(str, str)   # 拖拽合并：dragged_payload, target_entry_id
     removeRequested = Signal(str)       # 右键移除（entry id）
     removeFromFolder = Signal(str)      # 文件夹内右键移出（payload "M:fid:idx"）
@@ -1415,7 +1417,9 @@ class AppIcon(QWidget):
         """悬停计时到点：展开文件夹（与点击同一出口，iOS 语义的开关不变）。"""
         if not self._hover_expand_ok():
             return
-        self._open_folder()
+        # v14：走独立信号——窗口据此给弹窗打「悬停打开」标记，
+        # 鼠标离开图标与弹窗后自动收起（点击打开的弹窗不自动关）
+        self.folderHoverOpened.emit(self.entry["id"])
 
     # ---------- 拖放接收 ----------
     def dragEnterEvent(self, e):

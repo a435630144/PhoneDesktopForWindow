@@ -6,6 +6,9 @@
   H2  非文件夹 / 文件夹内部成员 / 拖动中 / 已按下 / 多选态 -> 不展开
   H3  该文件夹已开着 -> 不触（否则悬停一下反而把它关了）
   H4  设置 `folder_hover_expand=False` -> 不展开
+  H5  悬停到点发独立信号 `folderHoverOpened`（点击打开与悬停打开分流）
+  H6  悬停打开的弹窗：鼠标离开图标与弹窗 -> 连丢 3 拍自动收起
+  H7  鼠标在弹窗内 / 拖动中 -> 不自动关；点击打开的弹窗永不自动关
   P1  首次启动补一页空白页（`ensure_second_page`），页点因此会出现
   P2  已有 2 页以上不补；用户删掉空白页后不再补（一次性标记）
   Z1  双击空白处 -> 纯净模式：图标/Dock/组件全隐，再双击恢复
@@ -23,7 +26,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 ROOT = Path(__file__).resolve().parent.parent
 
-from PySide6.QtCore import Qt                    # noqa: E402
+from PySide6.QtCore import QPoint, QRect, Qt     # noqa: E402
 from PySide6.QtWidgets import QApplication      # noqa: E402
 from src import grid_flow                        # noqa: E402
 from src import folder_forms                     # noqa: E402
@@ -121,7 +124,7 @@ def main(app):
 
     # 驻留计时器：到点才展开，离开即撤
     fired = []
-    folder_icon._open_folder = lambda: fired.append(1)     # type: ignore[assignment]
+    folder_icon.folderHoverOpened.connect(lambda eid: fired.append(eid))
     folder_icon.enterEvent(None)
     check("H5 enter 即起表", folder_icon._hover_open.isActive())
     folder_icon.leaveEvent(None)
@@ -129,6 +132,101 @@ def main(app):
     folder_icon.enterEvent(None)
     folder_icon.mousePressEvent(_FakePress(Qt.LeftButton, folder_icon.pos()))
     check("H5c 按下撤表", not folder_icon._hover_open.isActive())
+
+    # 悬停到点走独立信号：点击打开的弹窗不该被"离开即关"误伤
+    folder_icon._press_pos = None          # H5c 按下留下的状态要清
+    folder_icon._drag_loop = False
+    folder_icon.window = lambda: _FakeWin(st)      # type: ignore[assignment]
+    folder_icon._on_hover_open()
+    check("H5d 悬停展开发 folderHoverOpened（不是 folderClicked）",
+          fired == ["f1"], str(fired))
+
+    # ---------- H6 / H7：悬停展开的自动关闭 ----------
+    from src import folder_popup as fpmod
+
+    class _Cursor:
+        pt = None
+
+        @staticmethod
+        def pos():
+            return _Cursor.pt
+
+    st_h = Storage(path=str(tmp / "hover.json"))
+    st_h.layout.append({"id": "hf", "type": "folder", "col": 0, "row": 0,
+                        "page": 0, "name": "HF",
+                        "app": {"name": "HF", "target": "HF", "kind": "app"},
+                        "apps": [{"name": "m1", "target": "m1",
+                                  "kind": "app"}]})
+    st_h.save()
+    popup = fpmod.FolderPopup(st_h, st_h.find_entry("hf"), anchor_rect=None)
+    popup.resize(300, 220)
+    orig_cursor = fpmod.QCursor
+    fpmod.QCursor = _Cursor
+    closed = []
+    orig_close = popup.close
+    popup.close = lambda: closed.append(1)      # type: ignore[assignment]
+    try:
+        popup.set_opened_by_hover(True)
+        check("H6a 悬停打开 -> 自动关闭定时器启动",
+              popup._auto_close.isActive())
+        _Cursor.pt = QPoint(5, 5)               # 屏幕左上角：既不在图标也不在弹窗
+        for _ in range(3):
+            popup._auto_close_tick()
+        check("H6b 连丢 3 拍 -> 自动关闭", len(closed) == 1, str(len(closed)))
+
+        closed.clear()
+        _Cursor.pt = popup.frameGeometry().center()
+        for _ in range(5):
+            popup._auto_close_tick()
+        check("H6c 鼠标在弹窗内 -> 不关", not closed, str(len(closed)))
+
+        # 锚点图标矩形内也不关
+        closed.clear()
+        popup._anchor_rect = QRect(popup.x() - 200, popup.y(), 80, 80)
+        _Cursor.pt = popup._anchor_rect.center()
+        for _ in range(5):
+            popup._auto_close_tick()
+        check("H6d 鼠标在文件夹图标上 -> 不关", not closed, str(len(closed)))
+
+        # 拖动中不关（弹窗里把成员拖出去时鼠标必然离开弹窗）
+        closed.clear()
+        popup._dragging = True
+        _Cursor.pt = QPoint(5, 5)
+        for _ in range(5):
+            popup._auto_close_tick()
+        check("H7a 拖动成员时不自动关", not closed, str(len(closed)))
+        popup._dragging = False
+
+        # 点击打开的弹窗不自动关
+        closed.clear()
+        popup.set_opened_by_hover(False)
+        check("H7b 点击打开 -> 定时器不启动", not popup._auto_close.isActive())
+        for _ in range(5):
+            popup._auto_close_tick()
+        check("H7c 点击打开的弹窗永不自动关", not closed, str(len(closed)))
+    finally:
+        popup.close = orig_close                     # type: ignore[assignment]
+        fpmod.QCursor = orig_cursor
+        popup.close()
+
+    # 集成：open_folder(by_hover=True) 真的把标记传给弹窗
+    st_o = Storage(path=str(tmp / "open.json"))
+    st_o.layout.append({"id": "fo", "type": "folder", "col": 0, "row": 0,
+                        "page": 0, "name": "FO",
+                        "app": {"name": "FO", "target": "FO", "kind": "app"},
+                        "apps": [{"name": "m1", "target": "m1",
+                                  "kind": "app"}]})
+    st_o.save()
+    win = DesktopWindow(st_o)
+    win.open_folder("fo", by_hover=True)
+    check("H7d 悬停打开时弹窗带标记",
+          win._popup is not None and win._popup._opened_by_hover is True)
+    win._close_popup()
+    win.open_folder("fo")
+    check("H7e 点击打开时无标记（不自动关）",
+          win._popup is not None and win._popup._opened_by_hover is False)
+    win._close_popup()
+    win.close()
 
     # ---------- P：默认第二页 ----------
     st2 = Storage(path=str(tmp / "s2.json"))

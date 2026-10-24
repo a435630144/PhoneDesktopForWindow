@@ -125,17 +125,16 @@ DEFAULT_SETTINGS = {
     "cell_preview_width": 2,        # 边框粗细 1~4
     "cell_preview_radius": 8,       # 圆角 0~16
     # ---- v14 反馈 9：液态玻璃（Liquid Glass） ----
-    # 光学叠加层（透镜边 / 色散 / 颗粒 / 扫光）挂在既有玻璃之上，三个表面
-    # （文件夹弹窗 / Dock 栏 / 小组件背景）各一个开关，总开关一票否决。
+    # 语义（重做版）：元素背景是**透明**的，只有边缘一圈带内的底图被折射
+    # （模拟玻璃厚度把后面的壁纸放大/挤压）。不叠色、不画高光、不描彩边。
+    # 三个表面（文件夹弹窗 / Dock 栏 / 小组件背景）各一个开关，总开关否决。
     # 读取/夹紧的唯一入口是 `liquid_glass.py`，这里只放缺省。
     "liquid_glass": True,           # 总开关
     "liquid_folder": True,          # 文件夹弹窗表面
     "liquid_dock": True,            # Dock 栏表面
     "liquid_widget": True,          # 小组件背景表面
-    "liquid_dispersion": 60,        # 色散强度 %（0~100）
-    "liquid_bezel": 60,             # 透镜边缘 %（0~100）
-    "liquid_noise": 40,             # 噪声颗粒 %（0~100）
-    "liquid_shimmer": True,         # 流动扫光（系统关动画时自动停）
+    "liquid_strength": 55,          # 折射强度 %（0 = 关掉折射，0~100）
+    "liquid_band": 22,              # 折射带宽度 DIP（6~40）
     "auto_sync_desktop": True,  # 监听桌面目录自动同步（v6 §7.4：新增/删除/
                                 # 重命名 debounce 1s 后增量更新，不重排已有布局）
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，

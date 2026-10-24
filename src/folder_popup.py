@@ -44,8 +44,8 @@ import traceback
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
                             QParallelAnimationGroup, QPoint,
-                            QPointF, QPropertyAnimation, QRect, QRectF, Qt,
-                            Signal, Property)
+                            QPointF, QPropertyAnimation, QRect, QRectF,
+                            QTimer, Qt, Signal, Property)
 from PySide6.QtGui import (QColor, QCursor, QFont, QGuiApplication, QPainter,
                            QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
@@ -399,6 +399,17 @@ class FolderPopup(QWidget):
         self._dragging = False
         self._closing = False
         self._backdrop = QPixmap()
+        # v14 反馈 9（重做）：液态玻璃底图缓存——折射只算一次，开合动画
+        # 期间按 z 缩放这张贴图（逐帧重算 40 环要 40~80ms，必卡）。
+        self._lens_pm = QPixmap()
+        self._lens_key = None
+        # v14 反馈 9 追加：悬停展开的自动关闭。鼠标既不在文件夹图标上、
+        # 也不在弹窗上 -> 连丢 3 拍（~750ms）就收起。点击打开的弹窗不启用。
+        self._opened_by_hover = False
+        self._auto_close_miss = 0
+        self._auto_close = QTimer(self)
+        self._auto_close.setInterval(250)
+        self._auto_close.timeout.connect(self._auto_close_tick)
         self._zoom = 1.0             # 玻璃表面缩放（开合动效驱动）
         self._zoom_center = QPointF(0.5, 0.5)  # 缩放中心（弹窗本地坐标）
         self._anchor_rect = anchor_rect  # 锚点图标全局矩形（动画起点参照）
@@ -647,9 +658,16 @@ class FolderPopup(QWidget):
         else:
             self._zoom_center = QPointF(self.width() / 2, self.height() / 2)
         if not keep_backdrop:
-            # 玻璃背板：必须在 show() 之前抓屏，否则会把自己抓进去
-            self._backdrop = effects.glass_backdrop(
-                QRect(self.x(), self.y(), self.width(), self.height()))
+            # 玻璃背板：必须在 show() 之前抓屏，否则会把自己抓进去。
+            # v14 反馈 9（重做）：液态模式走"轻霜底图 + 边缘折射"（3px），
+            # 传统玻璃仍用 8px 重霜。
+            rect = QRect(self.x(), self.y(), self.width(), self.height())
+            if liquid_glass.surface_enabled(self.storage, "folder"):
+                self._backdrop = liquid_glass.grab_backdrop(rect)
+            else:
+                self._backdrop = effects.glass_backdrop(rect)
+            self._lens_pm = QPixmap()
+            self._lens_key = None
         top = title_h
         # 反馈 4：**居中平均排布**。两层居中——① 内容块在窗口里水平居中
         # （窗口有 240px 下限，窄内容（2 个成员）时旧实现从 x=pad/2 起排，
@@ -845,6 +863,72 @@ class FolderPopup(QWidget):
                 pass
         self.update()
 
+    # ---------- 液态玻璃背景（v14 反馈 9 重做） ----------
+    def _lens_pixmap(self) -> QPixmap:
+        """整窗矩形的折射贴图（缓存）。开合动画每帧只做一次缩放绘制。"""
+        lens = liquid_glass.lens_style(self.storage)
+        radius = float(theme.GLASS_RADIUS)
+        key = (self.width(), self.height(), radius,
+               round(lens.strength, 4), round(lens.band, 3),
+               self._backdrop.cacheKey())
+        if self._lens_key == key and not self._lens_pm.isNull():
+            return self._lens_pm
+        w = max(1, self._backdrop.width())
+        dpr = (float(w) / max(1, self.width())) if w > 1 else 1.0
+        self._lens_pm = liquid_glass.refract(self._backdrop, radius, lens, dpr)
+        self._lens_key = key
+        return self._lens_pm
+
+    def _paint_liquid_surface(self, p, rect, z) -> bool:
+        """液态玻璃表面：透明底 + 边缘折射。返回 False = 交给普通玻璃兜底。"""
+        if not liquid_glass.surface_enabled(self.storage, "folder"):
+            return False
+        if self._backdrop.isNull():
+            return False
+        pm = self._lens_pixmap()
+        if pm.isNull():
+            return False
+        return liquid_glass.draw_refracted(
+            p, rect, theme.GLASS_RADIUS * z, pm,
+            border=liquid_glass.border_color())
+
+    # ---------- 悬停展开的自动关闭（v14 反馈 9 追加） ----------
+    def set_opened_by_hover(self, on: bool):
+        """标记这次展开是否由"悬停"触发——只有悬停展开才自动关。"""
+        self._opened_by_hover = bool(on)
+        self._auto_close_miss = 0
+        if self._opened_by_hover:
+            self._auto_close.start()
+        else:
+            self._auto_close.stop()
+
+    def _pointer_inside(self) -> bool:
+        """鼠标是否还在"文件夹图标"或"弹窗自己"上。
+
+        用全局光标坐标做命中（`underMouse()` 依赖 enter/leave 事件，分层
+        窗口上会丢事件，不可靠）。锚点矩形不存在时只认弹窗自身。
+        """
+        pos = QCursor.pos()
+        if self.frameGeometry().contains(pos):
+            return True
+        anchor = self._anchor_rect
+        if anchor is not None and anchor.isValid() and anchor.contains(pos):
+            return True
+        return False
+
+    def _auto_close_tick(self):
+        """连丢 3 拍（~750ms）才关：鼠标短暂掠过的抖动不该把弹窗关掉。"""
+        if not self._opened_by_hover or self._closing:
+            self._auto_close.stop()
+            return
+        if self._dragging or self._pointer_inside():
+            self._auto_close_miss = 0
+            return
+        self._auto_close_miss += 1
+        if self._auto_close_miss >= 3:
+            self._auto_close.stop()
+            self.close()
+
     def _regrab_backdrop(self):
         """背板重抓：隐藏本窗 → 抓屏 → 同帧显示回（避免把自己抓进去）。
 
@@ -853,8 +937,13 @@ class FolderPopup(QWidget):
         桌面窗口 —— 这是"移动鼠标就丢焦点"的另一半病根。
         """
         self.hide()
-        self._backdrop = effects.glass_backdrop(
-            QRect(self.x(), self.y(), self.width(), self.height()))
+        rect = QRect(self.x(), self.y(), self.width(), self.height())
+        if liquid_glass.surface_enabled(self.storage, "folder"):
+            self._backdrop = liquid_glass.grab_backdrop(rect)
+        else:
+            self._backdrop = effects.glass_backdrop(rect)
+        self._lens_pm = QPixmap()
+        self._lens_key = None
         self.show()
         self.attach_above_band()
 
@@ -1175,7 +1264,9 @@ class FolderPopup(QWidget):
         bottom = cy + (full_h - cy) * z
         rect = QRectF(left, top, max(0.0, right - left), max(0.0, bottom - top))
         try:
-            effects.paint_glass(p, rect, self._backdrop, theme.GLASS_RADIUS * z)
+            if not self._paint_liquid_surface(p, rect, z):
+                effects.paint_glass(p, rect, self._backdrop,
+                                    theme.GLASS_RADIUS * z)
         except Exception:
             # shell 类应用里 paintEvent 异常会穿过多层活动 QPainter 直接
             # 杀死进程（实测 Fatal error: Aborted / SIGSEGV）。兜底：
@@ -1194,13 +1285,6 @@ class FolderPopup(QWidget):
         p.setPen(Qt.NoPen)
         p.setBrush(overlay)
         p.drawRoundedRect(rect, theme.GLASS_RADIUS * z, theme.GLASS_RADIUS * z)
-        # v14 反馈 9：液态玻璃光学叠加层——在玻璃 + 色板层之上、文字之下。
-        # 弹窗是瞬态表面，扫光相位随开合动画一起走（关动画时 phase=None）。
-        if liquid_glass.surface_enabled(self.storage, "folder"):
-            liquid_glass.paint_overlay(
-                p, rect, theme.GLASS_RADIUS * z,
-                liquid_glass.liquid_style(self.storage),
-                phase=liquid_glass.shimmer_phase(), widget=self)
         # 标题：随玻璃浮现渐显；vibrancy 规范——材质上文字提高对比、
         # 稍加字重、微加字距（不用平灰）。iOS 文件夹标题居中。
         p.setOpacity(min(1.0, (z - 0.55) / 0.35))

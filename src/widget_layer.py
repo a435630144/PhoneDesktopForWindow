@@ -148,6 +148,14 @@ class WidgetLayer(QObject):
                     (cs, rs))
             self.storage.save()
         w = cls(self.storage, entry)
+        # v14 反馈 9（重做）：液态玻璃底图必须在 show() 之前抓（否则把
+        # 组件自己抓进去）。组件基类提供，插件组件不实现时是空操作。
+        prep = getattr(w, "prepare_lens_backdrop", None)
+        if callable(prep):
+            try:
+                prep()
+            except Exception:      # noqa: BLE001 —— 抓屏失败退回静态玻璃
+                pass
         w.closed.connect(self._on_closed)
         w.gridChanged.connect(self.gridChanged.emit)
         w.anchorHover.connect(self.anchorHover.emit)

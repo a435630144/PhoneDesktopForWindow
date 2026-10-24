@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (QBrush, QColor, QFont, QLinearGradient, QPainter,
+                          QPainterPath, QPen, QPixmap)
 
 from . import theme
 from . import liquid_glass
@@ -184,20 +185,50 @@ class GlassWidget(FloatingWidget):
     def style(self):
         return self._style()
 
+    def prepare_lens_backdrop(self):
+        """抓一块底图供液态玻璃折射（**必须在 show() 之前**调用）。
+
+        组件是常驻表面，逐帧抓屏 + 逐像素位移都不可行（v8 C2 的结论不变）；
+        这里只在创建时抓一次，之后靠缓存，位置变了才重抓。
+        """
+        if not liquid_glass.surface_enabled(self.storage, "widget"):
+            self._lens_src = QPixmap()
+            return
+        self._lens_src = liquid_glass.grab_backdrop(self.geometry())
+        self._lens_pm = QPixmap()
+        self._lens_key = None
+
+    def _lens_pixmap(self, radius: float) -> QPixmap:
+        """折射贴图（缓存）：尺寸/参数/底图变化才重算。"""
+        src = getattr(self, "_lens_src", None)
+        if src is None or src.isNull():
+            return QPixmap()
+        lens = liquid_glass.lens_style(self.storage)
+        key = (self.width(), self.height(), round(float(radius), 2),
+               round(lens.strength, 4), round(lens.band, 3), src.cacheKey())
+        if getattr(self, "_lens_key", None) == key \
+                and not getattr(self, "_lens_pm", QPixmap()).isNull():
+            return self._lens_pm
+        dpr = float(src.width()) / max(1, self.width())
+        self._lens_pm = liquid_glass.refract(src, radius, lens, dpr)
+        self._lens_key = key
+        return self._lens_pm
+
     def _paint_surface(self, p):
         st = self.style
         # v10 A8：玻璃画在**卡片**矩形上——编辑态窗口外扩了一圈，玻璃
         # 必须留在卡片位置，外扩区只保留 alpha=2 的命中填充。
         card = QRectF(self.card_rect())
+        # v14 反馈 9（重做）：液态玻璃 = 透明底 + 边缘折射的底图。
+        # 没抓到 / 没开时走原来的静态玻璃（观感不跳变，只是没有折射）。
+        if liquid_glass.surface_enabled(self.storage, "widget"):
+            pm = self._lens_pixmap(st.radius)
+            if not pm.isNull() and liquid_glass.draw_refracted(
+                    p, card, st.radius, pm,
+                    border=liquid_glass.border_color()):
+                return
         paint_glass(p, card, st.radius,
                     tint_alpha=st.tint_alpha, tint_color=st.bg)
-        # v14 反馈 9：液态玻璃光学叠加层（在玻璃之上、内容之下）。
-        # 组件是常驻表面，扫光由 liquid_glass 的共享低频 ticker 驱动，
-        # 系统关动画时 shimmer_phase() 返回 None，整条不画。
-        if liquid_glass.surface_enabled(self.storage, "widget"):
-            liquid_glass.paint_overlay(
-                p, card, st.radius, liquid_glass.liquid_style(self.storage),
-                phase=liquid_glass.shimmer_phase(), widget=self)
 
     def paint_content(self, p):
         """子类实现。默认什么都不画（防止漏实现时整块空白看不出来）。"""
@@ -205,4 +236,6 @@ class GlassWidget(FloatingWidget):
     def on_settings_changed(self):
         """组件设置应用后的回调（默认清样式缓存 + 重绘）。"""
         self._style_cache = None
+        self._lens_pm = QPixmap()      # 折射参数可能变了，贴图重算
+        self._lens_key = None
         self.update()

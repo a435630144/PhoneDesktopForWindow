@@ -1,75 +1,69 @@
 # -*- coding: utf-8 -*-
-"""液态玻璃光学叠加层（v14 反馈 9）。
+"""液态玻璃：透明背景 + 边缘折射（v14 反馈 9 重做版）。
 
-设计来源（公开实现调研，2026-10）：
-  - CSS/SVG 生态（feTurbulence + feDisplacementMap + 分层 backdrop-filter）
-    把液态玻璃拆成五层光学：①半透明底 + 模糊 ②折射位移 ③色散边缘
-    ④镜面高光（fresnel 边光 + 顶部亮线）⑤流动微动效。
-  - Apple Liquid Glass（WWDC 2025）：高光是"边缘随法线角变化的 rim
-    light"，色散在玻璃边界产生 RGB 镶边，表面会缓慢流动。
+## 参考实现
 
-Qt 没有 per-pixel shader（也不该为常驻组件每帧抓屏模糊——v8 C2 的结论），
-所以本模块只做**叠加层**：三个表面（文件夹弹窗 / Dock 栏 / 小组件背景）
-各自画好自己的底色之后，调用 `paint_overlay()` 把液态光学叠上去：
+GlassDesk 1.4.0（`src/GlassDesk.UI/Effects/TransitionGlass.hlsl`，WPF 像素
+着色器；其镜头剖面源自 Kyant0/AndroidLiquidGlass，Apache-2.0）的核心算法：
 
-  1. 透镜边（bezel）：贴边的渐隐亮带，模拟玻璃厚度的 fresnel 反光，
-     光从左上来——顶边最亮、左边次之、底/右渐暗；
-  2. 色散（dispersion）：贴边框内侧的四条 1px 细线，顶冷蓝 / 左青 /
-     右紫 / 底暖粉——玻璃边界把光拆成彩色镶边；
-  3. 颗粒（noise）：预生成一张确定性噪声纹理（feTurbulence 的静态近似），
-     低透明度平铺——去掉"塑料感"，让表面有材质；
-  4. 扫光（shimmer）：一道柔和高光带缓慢横扫（周期 SHIMMER_PERIOD 秒），
-     由模块内共享的低频 ticker 驱动；系统关动画时整条不画
-     （`effects.reduced_motion()` 与全项目动效同一把闸）。
+    t        = 1 - depth / band                   # 0 在带内沿，1 在最外沿
+    disp     = (1 - sqrt(1 - t²)) * 32 * strength # 圆剖面：边缘最大、带内归零
+    sampleUV = uv + disp * normal                 # 沿**外法线向内**采样
 
-单一真相源：参数只从 storage 的 `liquid_*` 键读（`liquid_style()`），
-三个表面共用一份；每个表面一个开关（`surface_enabled()`），总开关
-`liquid_glass` 一票否决。设置面板只写键，绘制层只认 `paint_overlay`
-的返回值——与 `label_style.py` 同一分层范式。
+也就是：**只有边缘一圈带内的底图被位移，中部一点都不动**。视觉上是一块
+"厚玻璃压在壁纸上"——边缘把后面的图案放大/挤压出一道折射带，玻璃本身
+是透明的，不加深色底、不画高光条、不描彩色边。
+
+## 为什么不用逐像素位移
+
+Qt 没有 per-pixel shader。纯 Python 逐像素采样实测 340×280@dpr2 要 450ms、
+760×300@dpr2 要 950ms，常驻表面根本扛不住。
+
+## 实现：逐行/逐列条带位移
+
+除圆角外，玻璃边缘的法线是轴向的——顶边只需要"这一行取下面第 disp 行"，
+左右同理。于是把带内每一行（列）单独从源图搬一条 1px 条带，位移量按
+`_displacement(depth)` 变化：
+
+  * 一条 1px 条带的搬运是 C++ 的 `drawImage`，整条边 48 行也只要几毫秒；
+  * 沿法线方向逐像素精确（不是近似缩放），高对比图案上不会出现扇形伪影；
+  * 位移是**渐进的**（每行不同），相邻行差 < 1px，看起来是连续的弯曲。
+
+圆角区两次覆盖（先横条后竖条）取其中的横向位移——面积只有 4×24² 像素，
+在 24px 尺度上肉眼分不出斜向法线与轴向位移的差别，但**不会出接缝**。
+
+曾经用"同心环带逐环放大"逼近，方向对但高对比底板上会出现扇形重影
+（2026-10-24 目检否决），换成条带法。
 """
 from __future__ import annotations
 
-import random
-import time
-import weakref
+import math
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Optional
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import (QColor, QImage, QLinearGradient, QPainter,
-                           QPainterPath, QPen, QPixmap)
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import (QColor, QImage, QPainter, QPainterPath, QPen,
+                           QPixmap)
 
-from . import effects
 from . import theme
 
 # ---------------------------------------------------------------- 常量
 
 SURFACES = ("folder", "dock", "widget")     # 三个可挂表面
 
-SHIMMER_PERIOD = 6.5      # 秒：一道高光扫过一遍（公开 demo 常用 5~8s）
-TICK_MS = 110             # 扫光驱动帧间隔（~9fps：慢动效不需要 60fps）
-BEZEL_W = 7.0             # 透镜边带宽（逻辑 px，随矩形短边缩放）
-DISPERSION_INSET = 2.0    # 色散线距边框内侧的距离
-NOISE_TILE = 96           # 噪声纹理边长（feTurbulence 的静态近似）
-NOISE_SEED = 20251024     # 固定种子：同一台机器每次看到的颗粒一致
-
-# 色散四边色调（公开实现的蓝/紫/粉/青语言，alpha 很低只是"镶边"）
-_DISPERSION_TOP = QColor(110, 160, 255)     # 顶：冷蓝
-_DISPERSION_LEFT = QColor(120, 220, 255)    # 左：青
-_DISPERSION_RIGHT = QColor(150, 120, 255)   # 右：紫
-_DISPERSION_BOTTOM = QColor(255, 140, 170)  # 底：暖粉
-
-_DEFAULTS = {"dispersion": 60, "bezel": 60, "noise": 40, "shimmer": True}
+DEFAULT_STRENGTH = 55       # 折射强度（0~100 -> 0~1.0 位移倍率）
+DEFAULT_BAND = 22           # 折射带宽度（DIP，夹 6~40）
+DISP_SCALE = 32.0           # 32 DIP 基准位移（与 GlassDesk 同源）
+STRENGTH_MIN, STRENGTH_MAX = 0, 100
+BAND_MIN, BAND_MAX = 6, 40
 
 
 @dataclass(frozen=True)
-class LiquidStyle:
-    """一次绘制需要的全部液态参数（0~1 强度，不可变可缓存）。"""
+class Lens:
+    """一次折射需要的参数（0 强度 = 直通原图）。"""
 
-    dispersion: float = 0.6
-    bezel: float = 0.6
-    noise: float = 0.4
-    shimmer: bool = True
+    strength: float = DEFAULT_STRENGTH / 100.0   # 0~1
+    band: float = float(DEFAULT_BAND)            # DIP
 
 
 # ---------------------------------------------------------------- 参数读取
@@ -90,17 +84,6 @@ def _flag(value, default: bool) -> bool:
     return default
 
 
-def _pct(value, default: float) -> float:
-    """0~100 的强度旋钮 -> 0~1；脏值 / 越界一律回退或夹紧。"""
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return default / 100.0
-    if v != v:                      # NaN
-        return default / 100.0
-    return max(0.0, min(1.0, v / 100.0))
-
-
 def _get(storage, key: str, default):
     """读一个设置；Storage 自带 DEFAULT 回退，这里再兜一层（裸 dict 也行）。"""
     try:
@@ -113,23 +96,27 @@ def _get(storage, key: str, default):
     return default if v is None else v
 
 
-def liquid_style(storage) -> LiquidStyle:
-    """从 storage 读一份液态参数（唯一入口；设置面板只写键）。"""
-    return LiquidStyle(
-        dispersion=_pct(_get(storage, "liquid_dispersion",
-                             _DEFAULTS["dispersion"]),
-                        _DEFAULTS["dispersion"]),
-        bezel=_pct(_get(storage, "liquid_bezel", _DEFAULTS["bezel"]),
-                   _DEFAULTS["bezel"]),
-        noise=_pct(_get(storage, "liquid_noise", _DEFAULTS["noise"]),
-                   _DEFAULTS["noise"]),
-        shimmer=_flag(_get(storage, "liquid_shimmer", _DEFAULTS["shimmer"]),
-                      _DEFAULTS["shimmer"]),
-    )
+def _clamp(value, lo, hi, default: float) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if v != v:                      # NaN
+        return default
+    return max(lo, min(hi, v))
+
+
+def lens_style(storage) -> Lens:
+    """从 storage 读一份折射参数（唯一入口；设置面板只写键）。"""
+    strength = _clamp(_get(storage, "liquid_strength", DEFAULT_STRENGTH),
+                      STRENGTH_MIN, STRENGTH_MAX, DEFAULT_STRENGTH)
+    band = _clamp(_get(storage, "liquid_band", DEFAULT_BAND),
+                  BAND_MIN, BAND_MAX, DEFAULT_BAND)
+    return Lens(strength=strength / 100.0, band=float(band))
 
 
 def master_enabled(storage) -> bool:
-    """液态玻璃总开关（一票否决三个表面；设置面板总开关与它同源）。"""
+    """液态玻璃总开关（一票否决三个表面）。"""
     return _flag(_get(storage, "liquid_glass", True), True)
 
 
@@ -142,209 +129,155 @@ def surface_enabled(storage, surface: str) -> bool:
     return _flag(_get(storage, "liquid_" + surface, True), True)
 
 
-# ---------------------------------------------------------------- 绘制
+# ---------------------------------------------------------------- 折射
 
 
-def _edge_band(p: QPainter, rect: QRectF, bezel: float) -> None:
-    """透镜边：四道贴边渐隐亮带（fresnel 反光，光从左上来）。"""
-    w = max(1.0, min(BEZEL_W, rect.width() * 0.25, rect.height() * 0.25))
-    # 顶边最亮（34），左次之（26），底/右渐暗（16/12）——法线角越大越暗
-    for grad, x0, y0, x1, y1, peak in (
-            (QLinearGradient(rect.left(), rect.top(),
-                             rect.left(), rect.top() + w),
-             rect.left(), rect.top(), rect.right(), rect.top() + w, 34),
-            (QLinearGradient(rect.left(), rect.top(),
-                             rect.left() + w, rect.top()),
-             rect.left(), rect.top(), rect.left() + w, rect.bottom(), 26),
-            (QLinearGradient(rect.right() - w, rect.top(),
-                             rect.right(), rect.top()),
-                             rect.right() - w, rect.top(), rect.right(),
-                             rect.bottom(), 12),
-            (QLinearGradient(rect.left(), rect.bottom() - w,
-                             rect.left(), rect.bottom()),
-                             rect.left(), rect.bottom() - w, rect.right(),
-                             rect.bottom(), 16)):
-        grad.setColorAt(0.0, QColor(255, 255, 255, int(peak * bezel)))
-        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-        p.fillRect(QRectF(x0, y0, max(0.0, x1 - x0), max(0.0, y1 - y0)),
-                   grad)
+def _displacement(depth: float, band: float, strength: float,
+                  dpr: float = 1.0) -> float:
+    """GlassDesk 的圆剖面：带内沿 0 -> 最外沿 max（**物理像素**）。
 
-
-def _dispersion(p: QPainter, rect: QRectF, radius: float,
-                strength: float) -> None:
-    """色散：贴边框内侧四条细线，把白光拆成彩色镶边。"""
-    if strength <= 0.0:
-        return
-    a = int(26 * strength)
-    if a <= 0:
-        return
-    inset = DISPERSION_INSET
-    # 线段避开圆角（左右各收 radius*0.55），否则线头会画出弧外
-    shrink = max(0.0, radius * 0.55)
-    pen = QPen()
-    pen.setWidthF(1.2)
-    pen.setCapStyle(Qt.FlatCap)
-    for grad, p0, p1 in (
-            (QLinearGradient(rect.left(), 0, rect.right(), 0),      # 顶
-             QPointF(rect.left() + shrink, rect.top() + inset),
-             QPointF(rect.right() - shrink, rect.top() + inset)),
-            (QLinearGradient(0, rect.top(), 0, rect.bottom()),      # 左
-             QPointF(rect.left() + inset, rect.top() + shrink),
-             QPointF(rect.left() + inset, rect.bottom() - shrink)),
-            (QLinearGradient(0, rect.top(), 0, rect.bottom()),      # 右
-             QPointF(rect.right() - inset, rect.top() + shrink),
-             QPointF(rect.right() - inset, rect.bottom() - shrink)),
-            (QLinearGradient(rect.left(), 0, rect.right(), 0),      # 底
-             QPointF(rect.left() + shrink, rect.bottom() - inset),
-             QPointF(rect.right() - shrink, rect.bottom() - inset))):
-        color = _edge_color(p0, p1, rect)
-        if color is None:
-            continue
-        c = QColor(color)
-        c.setAlpha(a)
-        grad.setColorAt(0.0, QColor(c.red(), c.green(), c.blue(), a // 3))
-        grad.setColorAt(0.5, c)
-        grad.setColorAt(1.0, QColor(c.red(), c.green(), c.blue(), a // 3))
-        pen.setBrush(grad)
-        p.setPen(pen)
-        p.drawLine(p0, p1)
-
-
-def _edge_color(p0: QPointF, p1: QPointF, rect: QRectF) -> Optional[QColor]:
-    """按线段位置判断是哪条边（顶/底是水平线，左/右是垂直线）。"""
-    if abs(p0.y() - p1.y()) < 0.01:                    # 水平线
-        return _DISPERSION_TOP if p0.y() < rect.center().y() \
-            else _DISPERSION_BOTTOM
-    if abs(p0.x() - p1.x()) < 0.01:                    # 垂直线
-        return _DISPERSION_LEFT if p0.x() < rect.center().x() \
-            else _DISPERSION_RIGHT
-    return None
-
-
-_noise_cache: Optional[QPixmap] = None
-
-
-def _noise_pixmap() -> QPixmap:
-    """确定性噪声纹理（feTurbulence 的静态近似）：只生成一次，全局复用。"""
-    global _noise_cache
-    if _noise_cache is None:
-        rng = random.Random(NOISE_SEED)
-        img = QImage(NOISE_TILE, NOISE_TILE, QImage.Format_ARGB32)
-        for y in range(NOISE_TILE):
-            for x in range(NOISE_TILE):
-                v = rng.randint(0, 110)               # 灰度颗粒，暗部为主
-                img.setPixel(x, y, QColor(v, v, v, v).rgba())
-        _noise_cache = QPixmap.fromImage(img)
-    return _noise_cache
-
-
-def _shimmer_band(p: QPainter, rect: QRectF, phase: float) -> None:
-    """扫光：一道柔和高光带横扫（phase 0~1；带在界外时不画）。"""
-    if phase is None:
-        return
-    span = rect.width() * 1.5
-    cx = rect.left() + (-0.25 + 1.5 * phase) * span
-    bw = rect.width() * 0.30
-    left = cx - bw / 2.0
-    if left > rect.right() or left + bw < rect.left():
-        return                                          # 整条在界外
-    grad = QLinearGradient(left, 0, left + bw, 0)
-    grad.setColorAt(0.0, QColor(255, 255, 255, 0))
-    grad.setColorAt(0.5, QColor(255, 255, 255, 30))
-    grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-    p.fillRect(QRectF(left, rect.top(), bw, rect.height()), grad)
-
-
-def paint_overlay(p: QPainter, rect, radius: float, style: LiquidStyle,
-                  phase: Optional[float] = None, widget=None) -> None:
-    """在**已有玻璃**之上叠加液态光学层（不画底色——底色归各表面）。
-
-    - `rect` / `radius`：表面矩形与圆角（半径会被夹紧到短边一半内）；
-    - `style`：`liquid_style()` 的返回值；全零样式什么都不画；
-    - `phase`：扫光相位 0~1；None = 静态（预览 / 减动效场景）；
-    - `widget`：传入表面控件即自动挂上扫光 ticker（幂等）。
+    `depth` / `band` 都是物理像素，位移基准 32 DIP 也要乘 dpr——漏乘会让
+    高 DPI 屏上的折射只有一半强度（dpr=2 时肉眼几乎看不出）。
     """
-    if widget is not None:
-        attach(widget)
-    if style is None:
-        return
+    if band <= 0.01 or strength <= 0.0:
+        return 0.0
+    t = 1.0 - max(0.0, min(band, depth)) / band
+    return (1.0 - math.sqrt(max(0.0, 1.0 - t * t))) * DISP_SCALE * strength * dpr
+
+
+def refract(backdrop: QPixmap, radius: float, lens: Lens,
+            dpr: float = 1.0, frost: float = 3.0) -> QPixmap:
+    """把 `backdrop`（正好覆盖元素矩形）做成边缘折射贴图。
+
+    - `radius`：元素圆角（逻辑 DIP）；`dpr`：backdrop 的物理/逻辑比；
+    - `frost`：中部磨砂半径（0 = 不磨砂）。**边缘带始终取清晰底图**——
+      真玻璃的边是透镜（成像清晰），中部才是磨砂面；两边都糊的话折射就
+      看不出来了；
+    - 位移为 0（关闭/弱到不可见）时直接返回原图，不做任何拷贝。
+
+    中部在 frost=0 时与输入逐像素相等（判据 L6b）。
+    """
+    if backdrop is None or backdrop.isNull():
+        return QPixmap()
+    dpr = float(dpr or 1.0)
+    if lens is None or lens.strength <= 0.0 or lens.band <= 0.5:
+        return backdrop
+
+    w_dev = float(backdrop.width())
+    h_dev = float(backdrop.height())
+    if w_dev < 6 or h_dev < 6:
+        return backdrop
+    band_dev = min(lens.band * dpr, min(w_dev, h_dev) * 0.5)
+    radius_dev = max(0.0, min(float(radius) * dpr,
+                              w_dev * 0.5, h_dev * 0.5))
+    if band_dev < 1.0:
+        return backdrop
+
+    # 边缘带取清晰底图，中部取磨砂底图（frost=0 时两者同一张）
+    src = backdrop.toImage().convertToFormat(QImage.Format_ARGB32)
+    base = src
+    if frost > 0.05:
+        try:
+            from . import effects
+            frosted = effects.blur_pixmap(backdrop, blur_radius=frost)
+            if not frosted.isNull():
+                base = frosted.toImage().convertToFormat(QImage.Format_ARGB32)
+        except Exception:      # noqa: BLE001 —— 模糊失败就用清晰底图
+            base = src
+    out = QImage(int(w_dev), int(h_dev), QImage.Format_ARGB32)
+    out.fill(Qt.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+    full = QRectF(0.0, 0.0, w_dev, h_dev)
+    src_rect = QRectF(0.0, 0.0, w_dev, h_dev)
+    clip = QPainterPath()
+    clip.addRoundedRect(full, radius_dev, radius_dev)
+    p.setClipPath(clip)
+    p.drawImage(full, base, src_rect)         # 中部：磨砂面
+
+    band_i = int(round(band_dev))
+    if band_i >= 1:
+        # 顶/底：带内每一行取"更靠内"的同一行（沿 y 位移）
+        for d in range(band_i):
+            disp = _displacement(float(d), band_dev, lens.strength, dpr)
+            if disp < 0.35:
+                continue
+            y_top = float(d)
+            y_bot = h_dev - 1.0 - float(d)
+            # 顶边：往下（更内）取；底边：往上取
+            p.drawImage(QRectF(0.0, y_top, w_dev, 1.0), src,
+                        QRectF(0.0, y_top + disp, w_dev, 1.0))
+            p.drawImage(QRectF(0.0, y_bot, w_dev, 1.0), src,
+                        QRectF(0.0, y_bot - disp, w_dev, 1.0))
+        # 左/右：带内每一列取"更靠内"的同一列（沿 x 位移）
+        for d in range(band_i):
+            disp = _displacement(float(d), band_dev, lens.strength, dpr)
+            if disp < 0.35:
+                continue
+            x_left = float(d)
+            x_right = w_dev - 1.0 - float(d)
+            p.drawImage(QRectF(x_left, 0.0, 1.0, h_dev), src,
+                        QRectF(x_left + disp, 0.0, 1.0, h_dev))
+            p.drawImage(QRectF(x_right, 0.0, 1.0, h_dev), src,
+                        QRectF(x_right - disp, 0.0, 1.0, h_dev))
+
+    p.end()
+    return QPixmap.fromImage(out)
+
+
+def draw_refracted(p: QPainter, rect, radius: float, pm: QPixmap,
+                   border: Optional[QColor] = None) -> bool:
+    """把**已算好**的折射贴图画进 `rect`（圆角裁剪 + 可选 1px 描边）。
+
+    表面持有缓存时用这个（开合动画每帧都会画，不能每帧重算折射）。
+    """
+    if pm is None or pm.isNull():
+        return False
     rect = QRectF(rect)
     if rect.width() <= 1 or rect.height() <= 1:
-        return
-    r = float(radius if radius is not None else theme.GLASS_RADIUS)
-    r = max(0.0, min(r, rect.width() / 2.0, rect.height() / 2.0))
-    if (style.dispersion <= 0 and style.bezel <= 0 and style.noise <= 0
-            and not (style.shimmer and phase is not None)):
-        return                                          # 全零：不碰画布
+        return False
+    r = max(0.0, min(float(radius), rect.width() / 2.0, rect.height() / 2.0))
     path = QPainterPath()
     path.addRoundedRect(rect, r, r)
     p.save()
     p.setClipPath(path)
-    if style.bezel > 0:
-        _edge_band(p, rect, style.bezel)
-    if style.dispersion > 0:
-        _dispersion(p, rect, r, style.dispersion)
-    if style.noise > 0:
-        p.setOpacity(min(1.0, 0.5 * style.noise))
-        p.drawTiledPixmap(rect, _noise_pixmap())
-        p.setOpacity(1.0)
-    if style.shimmer and phase is not None:
-        _shimmer_band(p, rect, phase)
+    p.drawPixmap(rect, pm, QRectF(pm.rect()))
     p.restore()
+    if border is not None:
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(border, 1.0))
+        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5),
+                          max(0.5, r - 0.5), max(0.5, r - 0.5))
+    return True
 
 
-# ---------------------------------------------------------------- 扫光驱动
+def paint_lens(p: QPainter, rect, radius: float, backdrop: QPixmap,
+               lens: Lens, border: Optional[QColor] = None,
+               dpr: float = 1.0) -> bool:
+    """一步到位：折射 + 绘制（无缓存场景 / 一次性截图用）。
 
-_surfs: Dict[int, weakref.ref] = {}
-_timer: Optional[QTimer] = None
-_t0 = time.monotonic()
-
-
-def _surfaces() -> Dict[int, weakref.ref]:
-    """当前挂着的表面（顺手清掉已销毁的弱引用）。"""
-    for k in [k for k, r in _surfs.items() if r() is None]:
-        _surfs.pop(k, None)
-    return dict(_surfs)
-
-
-def attach(widget) -> None:
-    """把表面挂上扫光 ticker（幂等；控件销毁后自动脱落）。"""
-    _surfs[id(widget)] = weakref.ref(widget)
-    _ensure_timer()
+    常驻或带动画的表面请自己缓存 `refract()` 的结果再调 `draw_refracted()`。
+    """
+    if backdrop is None or backdrop.isNull():
+        return False
+    return draw_refracted(p, rect, radius, refract(backdrop, radius, lens, dpr),
+                          border)
 
 
-def detach(widget) -> None:
-    _surfs.pop(id(widget), None)
+def grab_backdrop(rect) -> QPixmap:
+    """抓一块屏幕内容当折射底图（**清晰**，磨砂在 `refract` 里做）。
+
+    必须在目标窗口 **show() 之前**调用，否则会把它自己抓进去。
+    """
+    try:
+        from . import effects
+        return effects.grab_backdrop(rect)
+    except Exception:      # noqa: BLE001 —— 抓屏失败不该让表面画不出来
+        return QPixmap()
 
 
-def _ensure_timer() -> None:
-    global _timer
-    if _timer is None:
-        _timer = QTimer()
-        _timer.setInterval(TICK_MS)
-        _timer.timeout.connect(_tick)
-    if _surfs and not effects.reduced_motion():
-        _timer.start()
-
-
-def _tick() -> None:
-    if effects.reduced_motion() or not _surfs:
-        if _timer is not None:
-            _timer.stop()
-        return
-    for r in list(_surfs.values()):
-        w = r()
-        if w is None:
-            continue
-        try:
-            if w.isVisible():
-                w.update()
-        except (RuntimeError, AttributeError):
-            pass     # 已销毁的控件（C++ 对象已删）直接跳过
-
-
-def shimmer_phase() -> Optional[float]:
-    """当前扫光相位 0~1；系统关动画时 None（调用方据此跳过扫光）。"""
-    if effects.reduced_motion():
-        return None
-    return (time.monotonic() - _t0) % SHIMMER_PERIOD / SHIMMER_PERIOD
+def border_color() -> QColor:
+    """液态表面的 1px 描边（很淡，只用来界定边界，不是高光）。"""
+    return QColor(255, 255, 255, theme.GLASS_BORDER)

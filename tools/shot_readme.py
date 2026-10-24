@@ -138,6 +138,10 @@ def _storage(layout=None, widgets=None, **settings):
         "auto_clone_desktop": False,
         "show_widgets": True,
         "widgets_only": False,
+        # v14 反馈 9：液态玻璃的底图来自**实时抓屏**——出图时抓到的会是
+        # 开发者自己的桌面，不能进仓库。配图一律走传统玻璃（观感同样代表
+        # 产品），液态玻璃的效果单独用合成底图出图（tools/shot_liquid.py）。
+        "liquid_glass": False,
     })
     st._data["settings"].update(settings)
     st._data["layout"] = list(layout or [])
