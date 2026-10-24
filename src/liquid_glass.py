@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""液态玻璃：透明背景 + 边缘折射（v14 反馈 9/10）。
+"""液态玻璃：透明背景 + 边缘折射（v14 反馈 9/10；v14e 借鉴 liquid-glass-react）。
 
 ## 参考实现
 
@@ -47,6 +47,24 @@ Qt 没有 per-pixel shader。纯 Python 逐像素采样实测 340×280@dpr2 要 
 
 曾经用"同心环带逐环放大"逼近，方向对但高对比底板上会出现扇形重影
 （2026-10-24 目检否决），换成条带法。
+
+## v14e：liquid-glass-react 的四个可调光学层（2026-10-25）
+
+研究了 rdev/liquid-glass-react（Apple Liquid Glass 的 Web 实现）：它用
+SVG feDisplacementMap + feSpecularLighting 组合，默认参数里三件事最值得
+搬——`saturate(140%)`（玻璃下色彩增艳，这是它"像 Apple"的主要来源）、
+红蓝错位的 chromatic aberration、顶亮底暗的 specular 高光。全部以
+**可调选项**落地（默认只开饱和度 140%；色散/高光默认 0，尊重 v14c
+"不要发光描边"的目检结论），另加磨砂程度（0 = 清透玻璃）：
+
+  * 饱和度：PIL `ImageEnhance.Color` C 速度整图调（QImage↔PIL 各一次拷贝，
+    dpr2 的 700×600 约 4ms，只在 LiveLens 重算时发生）；
+  * 磨砂：清晰/磨砂两张底图按比例混合（`_blend_frost`），不是二选一；
+  * 色散：带内最外圈（t>0.45）叠画红/蓝单通道条带，位移 ±10%×强度错开
+    ——棱镜光谱的红光偏折更强，红在外蓝在内；
+  * 高光：竖向线性渐变笔刷描 1px 内圈（上亮下暗），不是旧版"发光描边"。
+
+四个参数都进 `Lens` / `LiveLens` 的 key，设置面板改动即时重算。
 """
 from __future__ import annotations
 
@@ -56,8 +74,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import QRect, QRectF, Qt
-from PySide6.QtGui import (QColor, QImage, QPainter, QPainterPath, QPen,
-                           QPixmap)
+from PySide6.QtGui import (QColor, QImage, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QPixmap)
 
 from . import theme
 
@@ -67,18 +85,35 @@ SURFACES = ("folder", "dock", "widget")     # 三个可挂表面
 
 DEFAULT_STRENGTH = 60       # 折射强度（0~100 -> 0~1.0 位移倍率）
 DEFAULT_BAND = 24           # 折射带宽度（DIP，夹 6~40）
+DEFAULT_SATURATION = 140    # 玻璃下饱和度 %（liquid-glass-react 同款默认）
+DEFAULT_FROST = 100         # 磨砂程度 %（100 = v14d 前的固定磨砂）
+DEFAULT_ABERRATION = 0      # 边缘色散 %（0 = 关；v14c 反馈默认不做彩边）
+DEFAULT_RIMLIGHT = 0        # 边缘高光 %（0 = 关；同上）
 DISP_SCALE = 32.0           # 32 DIP 基准位移（与 GlassDesk 同源）
 STRENGTH_MIN, STRENGTH_MAX = 0, 100
 BAND_MIN, BAND_MAX = 6, 40
+SATURATION_MIN, SATURATION_MAX = 100, 200
+FROST_MIN, FROST_MAX = 0, 100
+ABERRATION_MIN, ABERRATION_MAX = 0, 100
+RIMLIGHT_MIN, RIMLIGHT_MAX = 0, 100
 LIVE_FPS = 30               # 拖动时折射重算上限（约 33ms 一次）
 
 
 @dataclass(frozen=True)
 class Lens:
-    """一次折射需要的参数（0 强度 = 直通原图）。"""
+    """一次折射需要的参数（0 强度 = 直通原图）。
+
+    v14e 四个新字段（饱和度/磨砂/色散/高光）的**出厂值**在 `lens_style()`，
+    dataclass 这里保持中性（1.0 / 0）——直接构造 `Lens(strength, band)` 的
+    老代码（测试、一次性截图）拿到的仍是"什么都不叠"的纯折射。
+    """
 
     strength: float = DEFAULT_STRENGTH / 100.0   # 0~1
     band: float = float(DEFAULT_BAND)            # DIP
+    saturation: float = 1.0                      # 1.0 = 不调（1.4 = +40%）
+    frost: float = 1.0                           # 1.0 = 全磨砂（v14d 前固定值）
+    aberration: float = 0.0                      # 0~1
+    rimlight: float = 0.0                        # 0~1
 
 
 # ---------------------------------------------------------------- 参数读取
@@ -127,7 +162,17 @@ def lens_style(storage) -> Lens:
                       STRENGTH_MIN, STRENGTH_MAX, DEFAULT_STRENGTH)
     band = _clamp(_get(storage, "liquid_band", DEFAULT_BAND),
                   BAND_MIN, BAND_MAX, DEFAULT_BAND)
-    return Lens(strength=strength / 100.0, band=float(band))
+    saturation = _clamp(_get(storage, "liquid_saturation", DEFAULT_SATURATION),
+                        SATURATION_MIN, SATURATION_MAX, DEFAULT_SATURATION)
+    frost = _clamp(_get(storage, "liquid_frost", DEFAULT_FROST),
+                   FROST_MIN, FROST_MAX, DEFAULT_FROST)
+    aberration = _clamp(_get(storage, "liquid_aberration", DEFAULT_ABERRATION),
+                        ABERRATION_MIN, ABERRATION_MAX, DEFAULT_ABERRATION)
+    rimlight = _clamp(_get(storage, "liquid_rimlight", DEFAULT_RIMLIGHT),
+                      RIMLIGHT_MIN, RIMLIGHT_MAX, DEFAULT_RIMLIGHT)
+    return Lens(strength=strength / 100.0, band=float(band),
+                saturation=saturation / 100.0, frost=frost / 100.0,
+                aberration=aberration / 100.0, rimlight=rimlight / 100.0)
 
 
 def master_enabled(storage) -> bool:
@@ -200,6 +245,91 @@ def _scrim_for(img: QImage) -> QColor:
     return QColor(0, 0, 0, min(42, int(round(12 + (lum - 150) / 105.0 * 30))))
 
 
+def _saturate(img: QImage, factor: float) -> QImage:
+    """玻璃下色彩增艳（liquid-glass-react 的 saturate(140%)）。
+
+    PIL `ImageEnhance.Color` 是 C 实现：0=灰度、1=原图、1.4=+40% 饱和，
+    和 CSS `saturate()` 语义一致。QImage(ARGB32) ↔ PIL RGBA 各一次拷贝，
+    dpr2 的 700×600 约 4ms——只在 LiveLens 重算时发生，拖动 30fps 预算内。
+
+    PIL 不可用 / 任何异常都退回原图：效果可以缺，折射不能崩。
+    """
+    if img.isNull() or abs(factor - 1.0) < 0.004:
+        return img
+    try:
+        from PIL import Image, ImageEnhance
+        w, h = img.width(), img.height()
+        buf = img.constBits()
+        data = bytes(buf) if isinstance(buf, memoryview) else bytes(
+            buf.tobytes() if hasattr(buf, "tobytes") else buf)
+        pil = Image.frombuffer("RGBA", (w, h), data, "raw", "BGRA",
+                               0, img.bytesPerLine())
+        pil = ImageEnhance.Color(pil).enhance(float(factor))
+        raw = pil.tobytes("raw", "BGRA")
+        # QImage(data, ...) 不拷贝缓冲，Python 侧 raw 会被回收——必须 copy()
+        return QImage(raw, w, h, w * 4, QImage.Format_ARGB32).copy()
+    except Exception:            # noqa: BLE001 —— PIL 缺席就跳过增艳
+        return img
+
+
+def _channel_img(img: QImage, color: QColor) -> QImage:
+    """抽出单通道图（红/蓝），色散条带用。
+
+    `Multiply` 合成：dest(壁纸) × source(纯红) = 只留 R 通道、G/B 归零。
+    """
+    out = QImage(img)
+    if out.isNull():
+        return QImage()
+    p = QPainter(out)
+    p.setCompositionMode(QPainter.CompositionMode_Multiply)
+    p.fillRect(out.rect(), color)
+    p.end()
+    return out
+
+
+def _blend_frost(sharp: QImage, soft: QImage, frost: float) -> QImage:
+    """按磨砂程度混合清晰/磨砂底图（frost=1 全磨砂 = v14d 前的固定行为）。
+
+    实时路径本来就同时裁了 sharp / soft 两张，混合只是一次 `drawImage`
+    叠加；磨砂面与折射条带都从**这张混合图**采样，带内外不会两套真相。
+    """
+    if frost >= 0.999 or sharp.isNull():
+        return soft
+    if frost <= 0.001 or soft.isNull():
+        return sharp
+    out = sharp.convertToFormat(QImage.Format_ARGB32)
+    if (soft.width(), soft.height()) != (out.width(), out.height()):
+        soft = soft.scaled(out.width(), out.height(),
+                           Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    p = QPainter(out)
+    p.setOpacity(max(0.0, min(1.0, frost)))
+    p.drawImage(QRectF(0.0, 0.0, float(out.width()), float(out.height())),
+                soft, QRectF(0.0, 0.0, float(soft.width()),
+                             float(soft.height())))
+    p.end()
+    return out
+
+
+def _draw_rimlight(p: QPainter, surface: QRectF, radius_dev: float,
+                   amount: float) -> None:
+    """方向性内描边（liquid-glass-react 的 specular rim）：上亮下暗。
+
+    竖向线性渐变笔刷描一圈 1.2px 内圈——顶部受光最强、两侧渐弱、底部最弱，
+    是"光照出来的边"而不是旧版那圈均匀的发光描边（v14c 目检否决项）。
+    """
+    rect = surface.adjusted(1.0, 1.0, -1.0, -1.0)
+    if rect.width() < 3 or rect.height() < 3:
+        return
+    grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+    grad.setColorAt(0.0, QColor(255, 255, 255, int(26 + 110 * amount)))
+    grad.setColorAt(0.5, QColor(255, 255, 255, int(10 + 45 * amount)))
+    grad.setColorAt(1.0, QColor(255, 255, 255, int(14 * amount)))
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(grad, 1.2))
+    p.drawRoundedRect(rect, max(0.5, radius_dev - 1.0),
+                      max(0.5, radius_dev - 1.0))
+
+
 def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
             frost: float = 3.0, base=None, margin: float = 0.0,
             scrim: bool = True, hairline: bool = True) -> QPixmap:
@@ -269,16 +399,21 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
             base_img = b.convertToFormat(QImage.Format_ARGB32)
     if base_img is None:
         base_img = src
-        if frost > 0.05:
+        # 磨砂程度联动：lens.frost 0 = 清透（半径归零）、1 = 原半径
+        eff_frost = frost * (float(lens.frost) if lens is not None else 1.0)
+        if eff_frost > 0.05:
             try:
                 from . import effects
                 frosted = effects.blur_pixmap(QPixmap.fromImage(src),
-                                              blur_radius=frost)
+                                              blur_radius=eff_frost)
                 if not frosted.isNull():
                     base_img = frosted.toImage().convertToFormat(
                         QImage.Format_ARGB32)
             except Exception:      # noqa: BLE001 —— 模糊失败就用清晰底图
                 base_img = src
+    # 饱和度：烘进 base_img，中部与边缘条带同源（与暗纱同一条纪律）
+    if lens is not None and abs(lens.saturation - 1.0) > 0.004:
+        base_img = _saturate(base_img, lens.saturation)
 
     sw_i = max(1, int(round(sw)))
     sh_i = max(1, int(round(sh)))
@@ -311,6 +446,12 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
         return max(0.0, min(hi, v))
 
     band_i = int(round(band_dev))
+    # 色散用的红/蓝单通道图（ab=0 不做，两张图也省了）
+    ab = float(lens.aberration) if lens is not None else 0.0
+    red_img = blue_img = None
+    if ab > 0.004:
+        red_img = _channel_img(base_img, QColor(255, 0, 0))
+        blue_img = _channel_img(base_img, QColor(0, 0, 255))
     if band_i >= 1:
         # 顶/底：带内每一行取"更靠外"的同一行（沿 y 向外采样）
         # 采样源用 base_img（与中部同磨砂同纱）而非原始 src——折射的
@@ -330,6 +471,29 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
                         QRectF(m_dev, sy_top, float(sw_i), 1.0))
             p.drawImage(QRectF(0.0, y_bot, float(sw_i), 1.0), base_img,
                         QRectF(m_dev, sy_bot, float(sw_i), 1.0))
+            if red_img is not None and t > 0.45:
+                # 色散：红光偏折更强——红通道再向外、蓝通道向内错一步，
+                # 只叠在最外圈（t>0.45）且半透明，是棱镜光谱不是发光边
+                fa = min(1.0, alpha * ab) * 0.55
+                if fa > 0.02:
+                    f = 0.10 * ab
+                    p.setOpacity(fa)
+                    p.drawImage(QRectF(0.0, y_top, float(sw_i), 1.0),
+                                red_img, QRectF(m_dev, _clamp(
+                                    m_dev + y_top - disp * (1.0 + f), max_sy),
+                                    float(sw_i), 1.0))
+                    p.drawImage(QRectF(0.0, y_top, float(sw_i), 1.0),
+                                blue_img, QRectF(m_dev, _clamp(
+                                    m_dev + y_top - disp * (1.0 - f), max_sy),
+                                    float(sw_i), 1.0))
+                    p.drawImage(QRectF(0.0, y_bot, float(sw_i), 1.0),
+                                red_img, QRectF(m_dev, _clamp(
+                                    m_dev + y_bot + disp * (1.0 + f), max_sy),
+                                    float(sw_i), 1.0))
+                    p.drawImage(QRectF(0.0, y_bot, float(sw_i), 1.0),
+                                blue_img, QRectF(m_dev, _clamp(
+                                    m_dev + y_bot + disp * (1.0 - f), max_sy),
+                                    float(sw_i), 1.0))
         # 左/右：带内每一列取"更靠外"的同一列（沿 x 向外采样）
         for d in range(band_i):
             t = 1.0 - float(d) / band_dev
@@ -346,6 +510,27 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
                         QRectF(sx_left, m_dev, 1.0, float(sh_i)))
             p.drawImage(QRectF(x_right, 0.0, 1.0, float(sh_i)), base_img,
                         QRectF(sx_right, m_dev, 1.0, float(sh_i)))
+            if red_img is not None and t > 0.45:
+                fa = min(1.0, alpha * ab) * 0.55
+                if fa > 0.02:
+                    f = 0.10 * ab
+                    p.setOpacity(fa)
+                    p.drawImage(QRectF(x_left, 0.0, 1.0, float(sh_i)),
+                                red_img, QRectF(_clamp(
+                                    m_dev + x_left - disp * (1.0 + f), max_sx),
+                                    m_dev, 1.0, float(sh_i)))
+                    p.drawImage(QRectF(x_left, 0.0, 1.0, float(sh_i)),
+                                blue_img, QRectF(_clamp(
+                                    m_dev + x_left - disp * (1.0 - f), max_sx),
+                                    m_dev, 1.0, float(sh_i)))
+                    p.drawImage(QRectF(x_right, 0.0, 1.0, float(sh_i)),
+                                red_img, QRectF(_clamp(
+                                    m_dev + x_right + disp * (1.0 + f), max_sx),
+                                    m_dev, 1.0, float(sh_i)))
+                    p.drawImage(QRectF(x_right, 0.0, 1.0, float(sh_i)),
+                                blue_img, QRectF(_clamp(
+                                    m_dev + x_right + disp * (1.0 - f), max_sx),
+                                    m_dev, 1.0, float(sh_i)))
         p.setOpacity(1.0)
 
     if hairline:
@@ -359,6 +544,9 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
         p.drawRoundedRect(surface.adjusted(0.5, 0.5, -0.5, -0.5),
                           max(0.5, radius_dev - 0.5),
                           max(0.5, radius_dev - 0.5))
+
+    if lens is not None and lens.rimlight > 0.004:
+        _draw_rimlight(p, surface, radius_dev, lens.rimlight)
 
     p.end()
     return QPixmap.fromImage(out)
@@ -437,9 +625,9 @@ class LiveLens:
 
         pm = self._lens.pixmap(全局矩形, 圆角, 参数, dpr)
 
-    key = (壁纸版本, 矩形, 圆角, 强度, 带宽)——组件被拖动时矩形变，自动重算；
-    壁纸换了版本号变，也自动重算。裁剪 + 位移整体 5~10ms（300×240@dpr2），
-    只在变化后的第一帧发生。
+    key = (壁纸版本, 矩形, 圆角, 强度, 带宽, 饱和度, 磨砂, 色散, 高光)——
+组件被拖动时矩形变，自动重算；壁纸换了版本号变，也自动重算。裁剪 + 位移
+整体 5~10ms（300×240@dpr2），只在变化后的第一帧发生。
     """
 
     def __init__(self):
@@ -465,13 +653,22 @@ class LiveLens:
             return -1
         return wall.version if wall is not None else -1
 
+    def _cache_key(self, rect, radius: float, lens: Lens, ver=None) -> tuple:
+        """矩形 / 参数 / 壁纸版本 → 缓存 key（stale 与 pixmap 共用）。"""
+        if ver is None:
+            ver = self.version()
+        rect = QRect(rect)
+        return (ver, rect.x(), rect.y(), rect.width(),
+                rect.height(), round(float(radius), 2),
+                round(lens.strength, 4), round(lens.band, 3),
+                round(float(lens.saturation), 3),
+                round(float(lens.frost), 3),
+                round(float(lens.aberration), 3),
+                round(float(lens.rimlight), 3))
+
     def stale(self, rect, radius: float, lens: Lens) -> bool:
         """矩形/参数/壁纸变了没有（用于决定要不要触发重绘）。"""
-        rect = QRect(rect)
-        key = (self.version(), rect.x(), rect.y(), rect.width(),
-               rect.height(), round(float(radius), 2),
-               round(lens.strength, 4), round(lens.band, 3))
-        return key != self._key
+        return self._cache_key(rect, radius, lens) != self._key
 
     def pixmap(self, rect, radius: float, lens: Lens,
                dpr: float = 1.0) -> QPixmap:
@@ -479,9 +676,7 @@ class LiveLens:
         if rect.isEmpty():
             return QPixmap()
         ver = self.version()
-        key = (ver, rect.x(), rect.y(), rect.width(), rect.height(),
-               round(float(radius), 2), round(lens.strength, 4),
-               round(lens.band, 3))
+        key = self._cache_key(rect, radius, lens, ver)
         if key == self._key and not self._pm.isNull():
             return self._pm
         self._key = key
@@ -502,7 +697,9 @@ class LiveLens:
                 if not sharp.isNull():
                     k = sharp.width() / max(1.0, float(outer.width()))
                     soft = wall.soft_crop(outer, (sharp.width(), sharp.height()))
-                    self._pm = refract(sharp, radius, lens, k, base=soft,
+                    # 磨砂程度：清晰/磨砂按比例混合（1 = v14d 前的固定磨砂）
+                    base = _blend_frost(sharp, soft, float(lens.frost))
+                    self._pm = refract(sharp, radius, lens, k, base=base,
                                        margin=m)
                     return self._pm
 

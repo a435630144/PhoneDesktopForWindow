@@ -11,8 +11,10 @@
 
   L1-L8  折射核心：默认参数 / 剖面 / 中部不动 / 只在带内变 / 向外采样 /
          纯色不变（= 没有高光、没有色散）/ 边界不抛
+  L10-L13 v14e 四个可调光学层：饱和度（PIL）/ 磨砂混合 / 色散 /
+         方向性高光——默认值下输出与 v14d 一致
   W1-W5  壁纸快照：覆盖范围 / 裁剪尺寸（含出界）/ 磨砂版 / 版本 / 无壁纸
-  V1-V4  实时折射缓存：命中 / 移动即重算 / stale 判据 / 参数变化
+  V1-V5  实时折射缓存：命中 / 移动即重算 / stale 判据 / 参数变化（含新参数）
   S1-S8  设置与配色：外观页只留总闸 + 两参数 / Dock 开关与置灰 /
          组件 bg_liquid 推导与置灰 / 文件夹色板的液态项
   R1-R3  三表面接线（液态开 -> 走折射；关 -> 走普通玻璃）
@@ -27,7 +29,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QRect, QRectF  # noqa: E402
+from PySide6.QtCore import QRect, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -114,6 +116,23 @@ def main(app):
     check("L1b 默认强度 60% / 带宽 24",
           abs(lens.strength - 0.6) < 1e-6 and abs(lens.band - 24) < 1e-6,
           "%.2f/%.1f" % (lens.strength, lens.band))
+    # v14e：四个新光学层（liquid-glass-react）的出厂值
+    check("L1f 默认饱和度 1.4 / 磨砂 1.0 / 色散 0 / 高光 0",
+          abs(lens.saturation - 1.4) < 1e-6 and abs(lens.frost - 1.0) < 1e-6
+          and lens.aberration == 0.0 and lens.rimlight == 0.0,
+          "%.2f/%.2f/%.2f/%.2f" % (lens.saturation, lens.frost,
+                                   lens.aberration, lens.rimlight))
+    check("L1g 直接构造 Lens 保持中性（老代码拿到纯折射）",
+          lg.Lens(0.6, 20.0).saturation == 1.0
+          and lg.Lens(0.6, 20.0).frost == 1.0
+          and lg.Lens(0.6, 20.0).aberration == 0.0
+          and lg.Lens(0.6, 20.0).rimlight == 0.0)
+    st.set_setting("liquid_saturation", 999)
+    st.set_setting("liquid_frost", -5)
+    lens_c = lg.lens_style(st)
+    check("L1h 新参数越界被夹紧（200 / 0）",
+          abs(lens_c.saturation - 2.0) < 1e-6
+          and abs(lens_c.frost - 0.0) < 1e-6)
     check("L1c 默认 Dock 表面开", lg.surface_enabled(st, "dock") is True)
     st.set_setting("liquid_dock", False)
     check("L1d Dock 开关关闭 -> 该表面不启用",
@@ -205,6 +224,93 @@ def main(app):
     check("L9b 暗壁纸只加极淡暗纱（≤6/255，保住透明感）", 53 <= dv <= 60,
           "60 -> %d" % dv)
 
+    # ---------- L10-L13 v14e 四个可调光学层 ----------
+    try:
+        from PIL import Image as _PILImage          # noqa: F401
+        has_pil = True
+    except Exception:                               # noqa: BLE001
+        has_pil = False
+
+    def _colored_pm(w=200, h=160):
+        """红->绿横向渐变（有饱和度可调，也有红蓝通道可分）。"""
+        def _p(p, w_, h_):
+            for x in range(int(w_)):
+                p.setPen(QColor(int(255 * x / max(1, w_ - 1)),
+                                90, int(255 - 255 * x / max(1, w_ - 1))))
+                p.drawLine(x, 0, x, int(h_))
+        return _pixmap(w, h, _p)
+
+    colored = _colored_pm()
+    if not has_pil:
+        check("L10 PIL 缺席：饱和度跳过（不崩）", True, "skip")
+    else:
+        sat_pm = lg.refract(colored, 20, lg.Lens(0.6, 20.0, saturation=2.0),
+                            dpr=1.0, frost=0.0, scrim=False).toImage()
+        neu_pm = lg.refract(colored, 20, lg.Lens(0.6, 20.0),
+                            dpr=1.0, frost=0.0, scrim=False).toImage()
+        c = sat_pm.pixelColor(100, 80)
+        n = neu_pm.pixelColor(100, 80)
+        check("L10 饱和度 200% 中部色彩更艳（R 升 G 降）",
+              c.red() > n.red() and c.green() < n.green(),
+              "(%d,%d,%d)->(%d,%d,%d)" % (n.red(), n.green(), n.blue(),
+                                          c.red(), c.green(), c.blue()))
+        check("L10b 中性饱和度 = 原图逐像素（frost 0 时）",
+              neu_pm.pixelColor(100, 80)
+              == colored.toImage().pixelColor(100, 80))
+
+    # 磨砂：清晰/磨砂混合，两端等于原图，中间介于两者之间
+    stripes = _pixmap(180, 140, lambda p, w_, h_: [
+        p.fillRect(x, 0, 3, int(h_), QColor(240, 40, 40) if (x // 3) % 2
+                   else QColor(20, 20, 40)) for x in range(0, int(w_), 6)])
+    sharp_q = stripes.toImage()
+    soft_q = sharp_q.scaled(20, 16, Qt.IgnoreAspectRatio,
+                            Qt.SmoothTransformation).scaled(
+                                sharp_q.width(), sharp_q.height(),
+                                Qt.IgnoreAspectRatio,
+                                Qt.SmoothTransformation)
+    f1 = lg._blend_frost(sharp_q, soft_q, 1.0)
+    f0 = lg._blend_frost(sharp_q, soft_q, 0.0)
+    fh = lg._blend_frost(sharp_q, soft_q, 0.5)
+    check("L11 磨砂 1.0 -> 原磨砂图（v14d 前的固定行为）",
+          f1.pixelColor(90, 70) == soft_q.pixelColor(90, 70))
+    check("L11b 磨砂 0 -> 清晰原图",
+          f0.pixelColor(90, 70) == sharp_q.pixelColor(90, 70))
+    mid = fh.pixelColor(90, 70)
+    s_, o_ = soft_q.pixelColor(90, 70), sharp_q.pixelColor(90, 70)
+    check("L11c 磨砂 0.5 介于两者之间",
+          min(s_.red(), o_.red()) <= mid.red() <= max(s_.red(), o_.red()),
+          "%d in [%d,%d]" % (mid.red(), min(s_.red(), o_.red()),
+                             max(s_.red(), o_.red())))
+
+    # 色散：默认 0 输出不变；开 1.0 后只影响最外圈、中部不动
+    ab0 = lg.refract(colored, 20, lg.Lens(0.6, 24.0), dpr=1.0, frost=0.0,
+                     scrim=False, hairline=False).toImage()
+    ab1 = lg.refract(colored, 20, lg.Lens(0.6, 24.0, aberration=1.0),
+                     dpr=1.0, frost=0.0, scrim=False,
+                     hairline=False).toImage()
+    edge_diff = sum(1 for x in range(30, 170, 4)
+                    if ab0.pixelColor(x, 0) != ab1.pixelColor(x, 0))
+    check("L12 色散改变最外圈（红蓝错位）", edge_diff > 10, "%d/35" % edge_diff)
+    mid_same = all(ab0.pixelColor(x, y) == ab1.pixelColor(x, y)
+                   for y in range(40, 120, 8) for x in range(40, 160, 8))
+    check("L12b 色散不动中部", mid_same)
+
+    # 高光：顶行被提亮、中部不动（上亮下暗的方向性内描边）
+    rim0 = lg.refract(colored, 20, lg.Lens(0.6, 24.0), dpr=1.0, frost=0.0,
+                      scrim=False, hairline=False).toImage()
+    rim1 = lg.refract(colored, 20, lg.Lens(0.6, 24.0, rimlight=1.0),
+                      dpr=1.0, frost=0.0, scrim=False,
+                      hairline=False).toImage()
+    top_gain = rim1.pixelColor(100, 1).value() - rim0.pixelColor(100, 1).value()
+    bot_gain = (rim1.pixelColor(100, rim1.height() - 2).value()
+                - rim0.pixelColor(100, rim0.height() - 2).value())
+    check("L13 高光提亮顶边", top_gain > 8, "+%d" % top_gain)
+    check("L13b 底边远弱于顶边", bot_gain < top_gain - 4,
+          "top+%d bot+%d" % (top_gain, bot_gain))
+    mid_same = all(rim0.pixelColor(x, y) == rim1.pixelColor(x, y)
+                   for y in range(40, 120, 8) for x in range(40, 160, 8))
+    check("L13c 高光不动中部", mid_same)
+
     # ---------- L7/L8 边界 ----------
     tiny = _pixmap(4, 4, lambda p, w_, h_: p.fillRect(0, 0, 4, 4,
                                                       QColor(10, 20, 30)))
@@ -295,6 +401,17 @@ def main(app):
     check("V4 参数变化 -> 重算", p4.cacheKey() != p3.cacheKey())
     check("V4b 强度变化不改输出尺寸",
           (p4.width(), p4.height()) == (p3.width(), p3.height()))
+    # v14e：新光学参数也进缓存 key（改设置后无需重开表面即重算）
+    lens_sat = lg.Lens(0.9, 24.0, saturation=1.8)
+    check("V5 stale 对新参数敏感（饱和度变了 = 过期）",
+          live.stale(rect_b, 20, lens_sat))
+    p5 = live.pixmap(rect_b, 20, lens_sat, 1.0)
+    check("V5b 饱和度变化 -> 重算", p5.cacheKey() != p4.cacheKey())
+    lens_frz = lg.Lens(0.9, 24.0, frost=0.2)
+    p6 = live.pixmap(rect_b, 20, lens_frz, 1.0)
+    check("V5c 磨砂变化 -> 重算", p6.cacheKey() != p5.cacheKey())
+    check("V5d stale 同参数为假",
+          not live.stale(rect_b, 20, lens_frz))
 
     # ---------- S1-S4 设置面板 ----------
     from src import settings_dialog
@@ -317,12 +434,41 @@ def main(app):
     check("S2c 带宽滑条写设置", st5.get_setting("liquid_band") == 30,
           str(st5.get_setting("liquid_band")))
     check("S2d 改动推窗口重绘", fw.calls > before, "calls=%d" % fw.calls)
+    # v14e：四个新滑条
+    check("S2e 饱和度滑条默认 140",
+          dlg.sld_liquid_saturation.value() == lg.DEFAULT_SATURATION,
+          str(dlg.sld_liquid_saturation.value()))
+    dlg.sld_liquid_saturation.setValue(180)
+    dlg.sld_liquid_frost.setValue(30)
+    dlg.sld_liquid_aberration.setValue(40)
+    dlg.sld_liquid_rimlight.setValue(50)
+    check("S2f 新滑条写设置",
+          st5.get_setting("liquid_saturation") == 180
+          and st5.get_setting("liquid_frost") == 30
+          and st5.get_setting("liquid_aberration") == 40
+          and st5.get_setting("liquid_rimlight") == 50,
+          "%s/%s/%s/%s" % (st5.get_setting("liquid_saturation"),
+                           st5.get_setting("liquid_frost"),
+                           st5.get_setting("liquid_aberration"),
+                           st5.get_setting("liquid_rimlight")))
+    dlg.chk_liquid.setChecked(False)
+    check("S2g 总闸关闭 -> 新滑条置灰",
+          not dlg.sld_liquid_saturation.isEnabled()
+          and not dlg.sld_liquid_frost.isEnabled()
+          and not dlg.sld_liquid_aberration.isEnabled()
+          and not dlg.sld_liquid_rimlight.isEnabled())
+    dlg.chk_liquid.setChecked(True)
     dlg._reset_liquid()
     check("S3 恢复默认 %d / %d" % (lg.DEFAULT_STRENGTH, lg.DEFAULT_BAND),
           st5.get_setting("liquid_strength") == lg.DEFAULT_STRENGTH
           and st5.get_setting("liquid_band") == lg.DEFAULT_BAND,
           "%s/%s" % (st5.get_setting("liquid_strength"),
                      st5.get_setting("liquid_band")))
+    check("S3c 恢复默认也覆盖四个新参数",
+          st5.get_setting("liquid_saturation") == lg.DEFAULT_SATURATION
+          and st5.get_setting("liquid_frost") == lg.DEFAULT_FROST
+          and st5.get_setting("liquid_aberration") == lg.DEFAULT_ABERRATION
+          and st5.get_setting("liquid_rimlight") == lg.DEFAULT_RIMLIGHT)
     check("S3b 文件夹悬停开关仍在布局页", hasattr(dlg, "chk_hover_folder"))
 
     check("S4 Dock 分页有液态玻璃开关", hasattr(dlg, "chk_dock_liquid"))

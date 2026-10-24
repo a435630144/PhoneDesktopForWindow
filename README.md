@@ -4,15 +4,15 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.1.0（v14d）**，本版是全量代码体检（《代码分析报告 2026-10-25》）落地的**修复批次**——state.json 损坏备份 / 元素类型清洗 / fsync 三重防护、组件商店 sha256 硬校验、纯净模式与拖拽等 14 项交互修复，并新增 **Dock 两侧布置网格**（水平 Dock 只禁实际压住的格子）、**原生观感图标文字阴影**、**可关的落点指示框**。此前的 8.0.2 把**液态玻璃**改成**实时折射**并让它成为**一种配色**；8.0.0 带来 **iOS 风格 Dock**、**天气组件分尺寸布局**（4×2 多出湿度 / 风力与三天温程条）等一批交互改进。**103 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.2.0（v14e）**。本版研究了 [liquid-glass-react](https://github.com/rdev/liquid-glass-react)（Apple 液态玻璃的 Web 实现），给液态玻璃带来**四个可调光学层**：玻璃饱和度（默认 140%，玻璃下色彩更艳）、磨砂程度（0 = 清透玻璃）、边缘色散与边缘高光（默认关，可开）——设置 ▸ 外观 ▸ 液态玻璃里即时调节；并修复两桩实机事故：窗口被外部销毁后的**僵尸进程自愈**（自动重建窗口，风暴时安全退出并恢复桌面图标）、以及一条不经托盘的退出路径**忘记恢复桌面图标**的问题。此前的 8.1.0 落地了全量代码体检修复批次与**Dock 两侧布置网格**；8.0.2 把**液态玻璃**改成**实时折射**并让它成为**一种配色**。**104 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.1.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.2.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-104%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 一款**界面语言与操作逻辑都走手机路线**的第三方桌面美化软件：它在桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层——位置、动效、文件夹、小组件，全部由你定义。
 
-开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**103 个测试文件**。产品名 **掌镜桌面**（英文 ZhangJing Desktop；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
+开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**104 个测试文件**。产品名 **掌镜桌面**（英文 ZhangJing Desktop；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="桌面总览：安卓式网格图标 + 锚定小组件"></p>
 
@@ -208,6 +208,16 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.2.0（v14e）· 2026-10-25 液态玻璃升级：借 liquid-glass-react 的四个可调光学层 + 僵尸进程自愈 → [发布说明](docs/release_notes/8.2.0.md)
+
+- **玻璃饱和度**（`liquid_saturation`，默认 140%）：玻璃下壁纸颜色更艳——参考实现 Apple Liquid Glass 的默认值，PIL C 速度整图调整，边缘折射带与磨砂面同源无色差
+- **磨砂程度**（`liquid_frost`，0~100%）：清晰 / 磨砂底图按比例混合，0 = 清透玻璃，100 = 原版全磨砂
+- **边缘色散**（`liquid_aberration`，默认关）：折射带最外圈红蓝错位（红光偏折更强的棱镜效果），只叠最外圈
+- **边缘高光**（`liquid_rimlight`，默认关）：上亮下暗的方向性内描边（受光高光），不是均匀发光边
+- 以上四项都在 设置 ▸ 外观 ▸ 液态玻璃，拖动即时生效（三个表面统一生效，无需重启）
+- **修复**：桌面带窗口被外部销毁后进程变僵尸（事件循环还在跑但无窗口、托盘消失、右键失灵）——守护现在会 `destroy()+show()` 重建原生窗口并重挂，复活风暴达上限时恢复原生图标并安全退出
+- **修复**：WM_CLOSE 直退（不经托盘退出路径）不会恢复被隐藏的原生桌面图标——`aboutToQuit` 统一兜底恢复
 
 ### 8.1.0（v14d）· 2026-10-25 修复批次：数据安全 + 安全加固 + Dock 两侧网格 → [发布说明](docs/release_notes/8.1.0.md)
 

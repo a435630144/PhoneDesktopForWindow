@@ -1309,6 +1309,52 @@ class SettingsDialog(QDialog):
         self._row(cq, card_lq,
                   i18n.T("settings.appearance.liquid.band.title"), bnd_box,
                   i18n.T("settings.appearance.liquid.band.hint"))
+
+        # v14e：liquid-glass-react 的四个可调光学层。饱和度默认 140%（lgr
+        # 同款，是"像 Apple"的主要来源）；色散/高光默认 0——v14c 目检结论
+        # 是"不要发光描边"，它们只作为可选项存在。
+        self.sld_liquid_saturation = self._liquid_slider(
+            "liquid_saturation", self._apply_liquid_saturation,
+            lo=liquid_glass.SATURATION_MIN, hi=liquid_glass.SATURATION_MAX)
+        self.lbl_liquid_saturation = self._liquid_value_lbl(
+            self.sld_liquid_saturation)
+        sat_box = self._liquid_slider_box(self.sld_liquid_saturation,
+                                          self.lbl_liquid_saturation)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.saturation.title"),
+                  sat_box,
+                  i18n.T("settings.appearance.liquid.saturation.hint"))
+
+        self.sld_liquid_frost = self._liquid_slider(
+            "liquid_frost", self._apply_liquid_frost)
+        self.lbl_liquid_frost = self._liquid_value_lbl(self.sld_liquid_frost)
+        frz_box = self._liquid_slider_box(self.sld_liquid_frost,
+                                          self.lbl_liquid_frost)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.frost.title"), frz_box,
+                  i18n.T("settings.appearance.liquid.frost.hint"))
+
+        self.sld_liquid_aberration = self._liquid_slider(
+            "liquid_aberration", self._apply_liquid_aberration)
+        self.lbl_liquid_aberration = self._liquid_value_lbl(
+            self.sld_liquid_aberration)
+        ab_box = self._liquid_slider_box(self.sld_liquid_aberration,
+                                         self.lbl_liquid_aberration)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.aberration.title"),
+                  ab_box,
+                  i18n.T("settings.appearance.liquid.aberration.hint"))
+
+        self.sld_liquid_rimlight = self._liquid_slider(
+            "liquid_rimlight", self._apply_liquid_rimlight)
+        self.lbl_liquid_rimlight = self._liquid_value_lbl(
+            self.sld_liquid_rimlight)
+        rim_box = self._liquid_slider_box(self.sld_liquid_rimlight,
+                                          self.lbl_liquid_rimlight)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.rimlight.title"),
+                  rim_box,
+                  i18n.T("settings.appearance.liquid.rimlight.hint"))
         lay.addWidget(card_lq)
         self._sync_liquid_controls()
 
@@ -1586,7 +1632,9 @@ class SettingsDialog(QDialog):
     def _sync_liquid_controls(self):
         """总开关关闭时下属控件置灰（0 强度是合法值，滑条不跟着置灰）。"""
         on = bool(self.chk_liquid.isChecked())
-        for w in (self.sld_liquid_strength, self.sld_liquid_band):
+        for w in (self.sld_liquid_strength, self.sld_liquid_band,
+                  self.sld_liquid_saturation, self.sld_liquid_frost,
+                  self.sld_liquid_aberration, self.sld_liquid_rimlight):
             w.setEnabled(on)
 
     def _liquid_changed(self):
@@ -1615,22 +1663,55 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("liquid_band", v)
         self._liquid_changed()
 
+    def _apply_liquid_saturation(self, v):
+        self.lbl_liquid_saturation.setText("%d%%" % v)
+        self.storage.set_setting("liquid_saturation", v)
+        self._liquid_changed()
+
+    def _apply_liquid_frost(self, v):
+        self.lbl_liquid_frost.setText("%d%%" % v)
+        self.storage.set_setting("liquid_frost", v)
+        self._liquid_changed()
+
+    def _apply_liquid_aberration(self, v):
+        self.lbl_liquid_aberration.setText("%d%%" % v)
+        self.storage.set_setting("liquid_aberration", v)
+        self._liquid_changed()
+
+    def _apply_liquid_rimlight(self, v):
+        self.lbl_liquid_rimlight.setText("%d%%" % v)
+        self.storage.set_setting("liquid_rimlight", v)
+        self._liquid_changed()
+
     def _reset_liquid(self):
-        """液态玻璃整卡回出厂（总闸开 + 默认强度 / 带宽）。"""
+        """液态玻璃整卡回出厂（总闸开 + 默认光学参数）。"""
         defaults = (("liquid_glass", True),
                     ("liquid_dock", True),
                     ("liquid_strength", liquid_glass.DEFAULT_STRENGTH),
-                    ("liquid_band", liquid_glass.DEFAULT_BAND))
+                    ("liquid_band", liquid_glass.DEFAULT_BAND),
+                    ("liquid_saturation", liquid_glass.DEFAULT_SATURATION),
+                    ("liquid_frost", liquid_glass.DEFAULT_FROST),
+                    ("liquid_aberration", liquid_glass.DEFAULT_ABERRATION),
+                    ("liquid_rimlight", liquid_glass.DEFAULT_RIMLIGHT))
         for k, v in defaults:
             self.storage.set_setting(k, v)
         # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
         self.chk_liquid.blockSignals(True)
         self.chk_liquid.setChecked(True)
         self.chk_liquid.blockSignals(False)
-        for sld, lbl, v in ((self.sld_liquid_strength, self.lbl_liquid_strength,
-                             liquid_glass.DEFAULT_STRENGTH),
-                            (self.sld_liquid_band, self.lbl_liquid_band,
-                             liquid_glass.DEFAULT_BAND)):
+        sliders = ((self.sld_liquid_strength, self.lbl_liquid_strength,
+                    liquid_glass.DEFAULT_STRENGTH),
+                   (self.sld_liquid_band, self.lbl_liquid_band,
+                    liquid_glass.DEFAULT_BAND),
+                   (self.sld_liquid_saturation, self.lbl_liquid_saturation,
+                    liquid_glass.DEFAULT_SATURATION),
+                   (self.sld_liquid_frost, self.lbl_liquid_frost,
+                    liquid_glass.DEFAULT_FROST),
+                   (self.sld_liquid_aberration, self.lbl_liquid_aberration,
+                    liquid_glass.DEFAULT_ABERRATION),
+                   (self.sld_liquid_rimlight, self.lbl_liquid_rimlight,
+                    liquid_glass.DEFAULT_RIMLIGHT))
+        for sld, lbl, v in sliders:
             sld.blockSignals(True)
             sld.setValue(v)
             sld.blockSignals(False)

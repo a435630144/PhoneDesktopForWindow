@@ -134,6 +134,11 @@ DEFAULT_SETTINGS = {
     "liquid_dock": True,            # Dock 栏的液态玻璃（其余元素各写各的）
     "liquid_strength": 60,          # 折射强度 %（0 = 关掉折射，0~100）
     "liquid_band": 24,              # 折射带宽度 DIP（6~40）
+    # v14e：liquid-glass-react 的四个可调光学层（读取/夹紧仍走 liquid_glass.py）
+    "liquid_saturation": 140,       # 玻璃下饱和度 %（100~200；140 = lgr 默认）
+    "liquid_frost": 100,            # 磨砂程度 %（0 = 清透玻璃，100 = 全磨砂）
+    "liquid_aberration": 0,         # 边缘色散 %（0 = 关；默认不做彩边）
+    "liquid_rimlight": 0,           # 边缘高光 %（0 = 关；默认不描高光）
     "auto_sync_desktop": True,  # 监听桌面目录自动同步（v6 §7.4：新增/删除/
                                 # 重命名 debounce 1s 后增量更新，不重排已有布局）
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，

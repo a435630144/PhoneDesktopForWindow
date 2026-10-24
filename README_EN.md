@@ -4,15 +4,15 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.1.0 (v14d)**, a fix batch landing the full code audit (*Code Analysis Report 2026-10-25*): three layers of state.json protection (corrupt-file backup, element-type sanitising, fsync'd saves), a mandatory sha256 check for store downloads, 14 interaction bug fixes (pure mode, drag-and-drop and more), plus a **grid beside the Dock** option (a horizontal Dock only blocks the cells it actually covers), **Windows-native label shadows** and a **switch for the drag preview box**. The preceding 8.0.2 turned **liquid glass** into a **real-time refraction** and made it **a colour choice**; the 8.0.0 line brought the **iOS-style Dock** and **size-specific widget layouts** (the weather widget's 4×2 adds humidity/wind and a three-day temperature-range bar). **103 test files green**. Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.2.0 (v14e)**. It studies [liquid-glass-react](https://github.com/rdev/liquid-glass-react) (the Web take on Apple's Liquid Glass) and brings **four adjustable optical layers** to liquid glass: glass saturation (140% by default, richer colours through the glass), frosting (0 = clear glass), edge dispersion and rim light (both off by default) — all live in Settings ▸ Appearance ▸ Liquid Glass. It also fixes two real-machine incidents: a **zombie process self-heal** after windows are destroyed externally (windows are rebuilt, or the app safely quits and restores desktop icons under a revive storm), and an exit path that bypassed the tray and **forgot to restore hidden desktop icons**. The preceding 8.1.0 landed the full code-audit fix batch and the **grid beside the Dock**; 8.0.2 turned liquid glass into a **real-time refraction** and **a colour choice**. **104 test files green**. Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v8.1.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.2.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-104%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 A third-party desktop organizer and beautifier for Windows with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
 
-Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **103 test files**. The product is called **掌镜桌面** (ZhangJing Desktop). The exe name and data dir remain `PhoneDesktop` so existing users' data paths stay valid.
+Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **104 test files**. The product is called **掌镜桌面** (ZhangJing Desktop). The exe name and data dir remain `PhoneDesktop` so existing users' data paths stay valid.
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
 
@@ -207,6 +207,16 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.2.0 (v14e) · 2026-10-25 liquid glass upgrade: four adjustable optical layers after liquid-glass-react + zombie self-heal → [notes](docs/release_notes/8.2.0.md)
+
+- **Glass saturation** (`liquid_saturation`, 140% default): richer colours through the glass — the reference implementation's default, applied at PIL C speed, with the refraction rim and frosted centre sampled from one backdrop (no colour mismatch)
+- **Frosting** (`liquid_frost`, 0–100%): the sharp and frosted backdrops blend proportionally; 0 = clear glass, 100 = the original full frost
+- **Edge dispersion** (`liquid_aberration`, off by default): a red/blue fringe on the outermost refraction rim (red bends farther, like a prism)
+- **Rim light** (`liquid_rimlight`, off by default): a directional inner highlight, brightest on top — light, not a glowing border
+- All four live in Settings ▸ Appearance ▸ Liquid Glass and apply live to every surface, no restart needed
+- **Fixed**: a zombie process after the desktop-band windows were destroyed externally (event loop alive, no windows, tray gone) — the watchdog now rebuilds native windows via `destroy()+show()` and re-attaches; under a revive storm it restores native icons and quits safely
+- **Fixed**: quitting via WM_CLOSE (bypassing the tray) skipped restoring hidden native desktop icons — `aboutToQuit` now restores centrally
 
 ### 8.1.0 (v14d) · 2026-10-25 fix batch: data safety + hardening + grid beside the Dock → [notes](docs/release_notes/8.1.0.md)
 
