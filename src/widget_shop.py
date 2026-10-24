@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import List
 
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
 
 from . import i18n
 from . import theme
+from . import widget_plugin
 from . import widget_store
 from .widget_center import CARD_MAX_COLS, GRID_GAP, columns_for
 
@@ -56,6 +58,31 @@ class _FetchWorker(QObject):
         try:
             self.done.emit(widget_store.fetch_index(force=True), "")
         except Exception as exc:      # noqa: BLE001 —— 失败原因原样交给界面
+            self.done.emit(None, str(exc))
+
+
+class _InstallWorker(QObject):
+    """B4：后台下载组件包。
+
+    下载是大头（3 镜像 × 3 候选 URL × 20s 超时，网络差时可达分钟级），
+    旧实现在 UI 线程同步跑，点一下"安装"界面能冻结几十秒。这里只把
+    **下载**放线程；解压/导入（import_zip 会执行插件模块代码）仍在
+    主线程做。
+    """
+
+    done = Signal(object, str)      # (tmp_path, error)
+
+    def __init__(self, entry: dict):
+        super().__init__()
+        self._entry = entry
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        try:
+            self.done.emit(widget_store.download(self._entry), "")
+        except Exception as exc:      # noqa: BLE001
             self.done.emit(None, str(exc))
 
 
@@ -287,10 +314,49 @@ class WidgetShopPage(QWidget):
                     return
                 widget_store.uninstall(wtype)
             elif state in ("available", "update"):
-                widget_store.install(entry)
+                self._start_install(entry)
+                return
         except Exception as exc:      # noqa: BLE001 —— 安装失败要原样告诉用户
             QMessageBox.warning(self, i18n.T("shop.failed"), str(exc))
             return
+        for card in self._cards:
+            card.refresh_state()
+        self.installedChanged.emit()
+
+    # ---------- 安装（B4：下载在后台线程） ----------
+    def _start_install(self, entry: dict):
+        if getattr(self, "_installing", False):
+            return
+        self._installing = True
+        wtype = entry.get("type")
+        for card in self._cards:
+            card.btn.setEnabled(False)
+            if card.entry.get("type") == wtype:
+                card.btn.setText(i18n.T("shop.installing"))
+        self._install_worker = _InstallWorker(entry)
+        self._install_worker.done.connect(self._on_downloaded)
+        self._install_worker.start()
+
+    def _on_downloaded(self, tmp, error: str):
+        self._installing = False
+        for card in self._cards:
+            card.btn.setEnabled(True)
+        if error or not tmp:
+            if error:
+                QMessageBox.warning(self, i18n.T("shop.failed"), error)
+            for card in self._cards:
+                card.refresh_state()
+            return
+        try:
+            # 导入（解压 + 执行插件模块代码）必须在主线程
+            widget_plugin.import_zip(tmp)
+        except Exception as exc:      # noqa: BLE001
+            QMessageBox.warning(self, i18n.T("shop.failed"), str(exc))
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         for card in self._cards:
             card.refresh_state()
         self.installedChanged.emit()

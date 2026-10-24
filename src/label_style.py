@@ -85,6 +85,7 @@ class PreviewStyle(NamedTuple):
     fill_alpha: float            # 0~1
     width: int                   # 1~4
     radius: int                  # 0~16
+    enabled: bool = True         # False = 拖动时不画落点指示框
 
 
 # ---------------------------------------------------------------- 读取助手
@@ -179,7 +180,8 @@ def preview_style(storage) -> PreviewStyle:
         width=_int(storage, "cell_preview_width", DEFAULT_PREVIEW_WIDTH,
                    PREVIEW_WIDTH_MIN, PREVIEW_WIDTH_MAX),
         radius=_int(storage, "cell_preview_radius", DEFAULT_PREVIEW_RADIUS,
-                    PREVIEW_RADIUS_MIN, PREVIEW_RADIUS_MAX))
+                    PREVIEW_RADIUS_MIN, PREVIEW_RADIUS_MAX),
+        enabled=_flag(storage, "cell_preview_enabled", True))
 
 
 def apply_preview_preset(storage, name: str) -> bool:
@@ -209,8 +211,18 @@ def draw_label_text(p: QPainter, rect, flags, text: str, style: LabelStyle,
         return
     p.setFont(theme.ui_font(font_px, bold=style.bold))
     if style.shadow:
+        # 原生观感 = 四向暗晕 + 下方加深（用户把系统原生标签与本项目
+        # 逐像素对比的结论）：先以约 55% 浓度在上下左右各偏移 1px 画
+        # 一圈收敛的暗晕，再以全浓度向 (+1,+1) 画主阴影——单一偏移
+        # 阴影无论怎么调 alpha 都出不了这种"刻"进壁纸的立体感
+        alpha = max(0.0, min(1.0, style.shadow_alpha))
+        halo = QColor(style.shadow_color)
+        halo.setAlphaF(alpha * 0.55)
+        p.setPen(halo)
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            p.drawText(rect.adjusted(dx, dy, dx, dy), flags, text)
         sc = QColor(style.shadow_color)
-        sc.setAlphaF(max(0.0, min(1.0, style.shadow_alpha)))
+        sc.setAlphaF(alpha)
         p.setPen(sc)
         p.drawText(rect.adjusted(1, 1, 0, 0), flags, text)
     if style.outline:

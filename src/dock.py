@@ -562,8 +562,64 @@ def storage_inset(storage) -> tuple:
     """当前设置下的可用区扣除 —— **网格唯一入口**（见模块 docstring 铁律 1）。"""
     if not bool(storage.get_setting("dock_enabled")):
         return (0, 0, 0, 0)
+    pos = normalize_position(storage.get_setting("dock_position"))
+    # dock_side_grid（新设置）：水平 Dock 开启"两侧布置网格"时不再整边
+    # 扣除——网格铺满全工作区，Dock 实际占住的格子由 side_grid_blocked()
+    # 标记禁放，Dock 较短时两侧空区照常摆图标。垂直 Dock（左/右）两侧
+    # 是上下区，语义不适用，维持整边扣除。
+    if pos in ("bottom", "top") and bool(storage.get_setting("dock_side_grid")):
+        return (0, 0, 0, 0)
     m = metrics_for(storage)
     return inset(True, storage.get_setting("dock_position"), m.thickness)
+
+
+def side_grid_blocked(storage) -> set:
+    """dock_side_grid 开启时被 Dock 条带实际占住的格子集合 {(col, row)}。
+
+    条带矩形按 `bar_rect`（与 DockWindow 同一套几何：长度/偏移/贴边
+    居中全部一致）外扩 8px 余量（hover 抬起 / 拖入预览的视觉空间），
+    与网格快照逐格求交。工作区尺寸按"网格对称边距铺满"反推（ox/oy
+    两侧等距），几像素的取整误差被余量吃掉。
+
+    网格快照未就绪（探针 / 挂载前 / 无头测试）返回空集——启动路径上
+    宁可短暂放过也不能抛异常。
+    """
+    if not (bool(storage.get_setting("dock_enabled"))
+            and bool(storage.get_setting("dock_side_grid"))):
+        return set()
+    pos = normalize_position(storage.get_setting("dock_position"))
+    if pos not in ("bottom", "top"):
+        return set()
+    try:
+        from . import grid_flow
+        m = grid_flow.current_metrics()
+        if m is None:
+            return set()
+        cols, rpp = max(1, int(m.cols)), max(1, int(m.rows))
+        cw, ch = int(m.cw), int(m.ch)
+        W = m.ox * 2 + cols * cw
+        H = m.oy * 2 + rpp * ch
+        bx, by, bw, bh = bar_rect(
+            (W, H), pos, metrics_for(storage),
+            off_x=offset_x(storage), off_y=offset_y(storage),
+            center=center_along_edge(storage))
+        pad = 8
+        bx, by, bw, bh = bx - pad, by - pad, bw + pad * 2, bh + pad * 2
+        pages = max(1, int(grid_flow.page_count(storage)))
+        blocked = set()
+        for local in range(rpp):
+            cy = m.oy + local * ch
+            if cy >= by + bh or cy + ch <= by:
+                continue
+            for col in range(cols):
+                cx = m.ox + col * cw
+                if cx >= bx + bw or cx + cw <= bx:
+                    continue
+                for p in range(pages):
+                    blocked.add((col, p * rpp + local))
+        return blocked
+    except Exception:      # noqa: BLE001 —— 禁放集是优化项，任何失败都退化为"不禁"
+        return set()
 
 
 def seed_from_layout(storage, limit: int = 6) -> list:

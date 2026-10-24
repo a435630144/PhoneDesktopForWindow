@@ -293,11 +293,16 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
     clip = QPainterPath()
     clip.addRoundedRect(surface, radius_dev, radius_dev)
     p.setClipPath(clip)
-    p.drawImage(surface, base_img, src_surface)     # 中部：磨砂面
+    # 暗纱先烘进中部底图，而不是事后 fillPath：边缘折射带与中部从
+    # **同一张**处理过的底图采样（否则带内是原始壁纸、带外是磨砂+纱，
+    # 亮度/色彩两套真相——用户反馈的"磨砂区与折射区明显色差"即此）
     if scrim:
         veil = _scrim_for(base_img)
         if veil.alpha() > 0:
-            p.fillPath(clip, veil)                  # 亮壁纸上的一层极淡暗纱
+            vp = QPainter(base_img)
+            vp.fillRect(base_img.rect(), veil)
+            vp.end()
+    p.drawImage(surface, base_img, src_surface)     # 中部：磨砂面
 
     max_sx = float(src.width() - 1)
     max_sy = float(src.height() - 1)
@@ -308,6 +313,8 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
     band_i = int(round(band_dev))
     if band_i >= 1:
         # 顶/底：带内每一行取"更靠外"的同一行（沿 y 向外采样）
+        # 采样源用 base_img（与中部同磨砂同纱）而非原始 src——折射的
+        # 几何形变保留，但色彩/亮度与磨砂面一体，不再有带内外色差
         for d in range(band_i):
             t = 1.0 - float(d) / band_dev
             alpha = _sharp_alpha(t)
@@ -319,9 +326,9 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
             y_bot = sh_i - 1.0 - float(d)
             sy_top = _clamp(m_dev + y_top - disp, max_sy)
             sy_bot = _clamp(m_dev + y_bot + disp, max_sy)
-            p.drawImage(QRectF(0.0, y_top, float(sw_i), 1.0), src,
+            p.drawImage(QRectF(0.0, y_top, float(sw_i), 1.0), base_img,
                         QRectF(m_dev, sy_top, float(sw_i), 1.0))
-            p.drawImage(QRectF(0.0, y_bot, float(sw_i), 1.0), src,
+            p.drawImage(QRectF(0.0, y_bot, float(sw_i), 1.0), base_img,
                         QRectF(m_dev, sy_bot, float(sw_i), 1.0))
         # 左/右：带内每一列取"更靠外"的同一列（沿 x 向外采样）
         for d in range(band_i):
@@ -335,9 +342,9 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
             x_right = sw_i - 1.0 - float(d)
             sx_left = _clamp(m_dev + x_left - disp, max_sx)
             sx_right = _clamp(m_dev + x_right + disp, max_sx)
-            p.drawImage(QRectF(x_left, 0.0, 1.0, float(sh_i)), src,
+            p.drawImage(QRectF(x_left, 0.0, 1.0, float(sh_i)), base_img,
                         QRectF(sx_left, m_dev, 1.0, float(sh_i)))
-            p.drawImage(QRectF(x_right, 0.0, 1.0, float(sh_i)), src,
+            p.drawImage(QRectF(x_right, 0.0, 1.0, float(sh_i)), base_img,
                         QRectF(sx_right, m_dev, 1.0, float(sh_i)))
         p.setOpacity(1.0)
 

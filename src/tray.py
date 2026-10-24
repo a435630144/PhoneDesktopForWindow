@@ -166,6 +166,14 @@ class SystemTray:
         # 先恢复原生桌面图标，再走退出流程（atexit 还会兜底一次）
         win32_layer.restore_native_icons()
         arm_exit_watchdog()
+        # B14：便签/待办的防抖定时器退出后不会再触发——先把控件里的
+        # 最新内容刷进 entry 再落盘，否则丢最后 0.3~0.6 秒的输入
+        layer = getattr(self.window, "_widget_layer", None)
+        if layer is not None:
+            try:
+                layer.flush_pending()
+            except Exception:
+                pass
         self.storage.save()
         self.window.hide_desktop()
         QApplication.quit()

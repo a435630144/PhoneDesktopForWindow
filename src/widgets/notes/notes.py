@@ -127,6 +127,12 @@ class NotesWidget(GlassWidget):
         self.entry["text"] = self.edit.toPlainText()
         self.storage.save()
 
+    def _flush_pending(self):
+        # B14：销毁/退出时防抖定时器不再触发，最后一次编辑直接刷盘
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+            self._save_text()
+
     def on_edit_mode(self, on: bool):
         """编辑态：正文让出鼠标，拖动控制点才不会被 QTextEdit 吞掉。
 

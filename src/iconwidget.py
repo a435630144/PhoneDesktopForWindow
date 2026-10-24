@@ -532,7 +532,8 @@ class AppIcon(QWidget):
 
         self._paint_icon_only(p, dpr)
         if not self._no_label:
-            self._paint_label(p)
+            # 缩放动画中（s 偏离 1）走 pixmap 贴图，消除文字逐帧重排抽动
+            self._paint_label(p, scaled=abs(s - 1.0) > 0.002)
         # 多选态标记画在最上层：压在图标左上角（不参与缩放，避免跟着
         # 悬停/按压一起抖）
         self._paint_select_badge(p)
@@ -625,26 +626,47 @@ class AppIcon(QWidget):
                                                cs, cs), dpr)
         p.restore()
 
-    def _paint_label(self, p: QPainter):
+    def _paint_label(self, p: QPainter, scaled: bool = False):
+        """画标签。scaled=True 时走 pixmap 缓存贴图。
+
+        悬停/按压/错峰淡入动画期间 painter 带非整数缩放变换，逐帧直接
+        drawText 会让字形取整每帧跳变——阴影/描边与文字互相错位抽动
+        （用户反馈"放大时字体抽一下"）。动画帧改为把整层标签（含阴影
+        描边）渲染进一张透明 pixmap 一次，再随变换平滑缩放地贴上去。
+        静止态（s≈1）仍直接画文字，保持像素级清晰。
+        """
+        items = self._label_items()
+        if not items:
+            return
+        if not scaled:
+            for rect, flags, line in items:
+                _ls.draw_label_text(p, rect, flags, line,
+                                    self._label_style, self._label_font_px)
+            return
+        origin, pm = self._label_pixmap(items)
+        p.save()
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.drawPixmap(origin, pm)
+        p.restore()
+
+    def _label_items(self):
+        """当前标签的 (rect, flags, line) 列表（三条布局路径在此汇合）。"""
         name = self._display_name()
         if not name:
-            return
+            return []
         if self._compact:
             # 文件夹成员：图标正下方一行小字（居中 + 末尾省略），
             # 与图标同一列宽，长文件名不会溢出到邻格（反馈 7）
             font = theme.ui_font(self._label_font_px,
                                  bold=self._label_style.bold)
-            p.setFont(font)
             fm = QFontMetrics(font)
             rect = QRect(self._box_x, 2 + self.icon_size,
                          max(1, self.width() - self._box_x * 2),
                          max(1, self._label_h))
             line = fm.elidedText(name, Qt.ElideRight, rect.width())
-            if line:
-                _ls.draw_label_text(p, rect,
-                                    Qt.AlignHCenter | Qt.AlignVCenter, line,
-                                    self._label_style, self._label_font_px)
-            return
+            if not line:
+                return []
+            return [(rect, Qt.AlignHCenter | Qt.AlignVCenter, line)]
         if self._layout is not None:
             # 反馈 12：默认两行折行（一行显示不下折到第二行，末行省略号）。
             # 行数由 `grid_sizing.LABEL_LINES` 决定，标签区高度
@@ -652,34 +674,61 @@ class AppIcon(QWidget):
             # 自动退回单行，这里按实际预留高度算行数，两边不会不一致。
             font = theme.ui_font(self._label_font_px,
                                  bold=self._label_style.bold)
-            p.setFont(font)
+            fm = QFontMetrics(font)
             rect = QRect(2, self.icon_size + 2,
                          self.width() - 4, self._label_h)
-            fm = QFontMetrics(font)
             max_lines = 2 if self._label_h >= fm.height() * 2 - 2 else 1
             lines = self._wrap_elide(name, fm, rect.width(), max_lines)
             lh = fm.height() + 1
-            for i, line in enumerate(lines):
-                r = QRect(rect.left(), rect.top() + i * lh, rect.width(), lh)
-                if not line:
-                    continue
-                _ls.draw_label_text(p, r, Qt.AlignCenter, line,
-                                    self._label_style, self._label_font_px)
-            return
+            return [(QRect(rect.left(), rect.top() + i * lh,
+                           rect.width(), lh), Qt.AlignCenter, line)
+                    for i, line in enumerate(lines) if line]
         # 旧路径（无 layout）：标签字号随 chrome 缩放（DPI×用户缩放）：
         # 100% 时 12px，125% 时 15px；最多两行折行 + 末行省略号
         font = theme.ui_font(self._label_font_px, bold=self._label_style.bold)
-        p.setFont(font)
+        fm = QFontMetrics(font)
         rect = QRect(2, self.icon_size + int(round(6 * self._m)),
                      self.width() - 4, int(round(34 * self._m)))
-        fm = QFontMetrics(font)
         lines = self._wrap_elide(name, fm, rect.width(), 2)
         lh = fm.height() + 1
-        for i, line in enumerate(lines):
-            r = QRect(rect.left(), rect.top() + i * lh, rect.width(), lh)
-            if line:
-                _ls.draw_label_text(p, r, Qt.AlignCenter, line,
-                                    self._label_style, self._label_font_px)
+        return [(QRect(rect.left(), rect.top() + i * lh,
+                       rect.width(), lh), Qt.AlignCenter, line)
+                for i, line in enumerate(lines) if line]
+
+    def _label_pixmap(self, items):
+        """把标签整层渲染成透明 pixmap（按内容键缓存，动画帧复用）。"""
+        st = self._label_style
+        key = (tuple((r.x(), r.y(), r.width(), r.height(), f, l)
+                     for r, f, l in items),
+               st.color.rgba(), st.bold, st.shadow, st.shadow_color.rgba(),
+               round(st.shadow_alpha, 3), st.outline,
+               st.outline_color.rgba(), st.outline_width,
+               self._label_font_px)
+        cached = getattr(self, "_label_pm_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        bound = items[0][0]
+        for r, _f, _l in items[1:]:
+            bound = bound.united(r)
+        # 阴影/描边最大越界 = 描边 3px + 阴影偏移 1px，四周留 4px 防裁
+        margin = 4
+        dpr = self.devicePixelRatioF()
+        pm = QPixmap(int((bound.width() + margin * 2) * dpr),
+                     int((bound.height() + margin * 2) * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.transparent)
+        pp = QPainter(pm)
+        pp.setRenderHint(QPainter.Antialiasing)
+        pp.setRenderHint(QPainter.TextAntialiasing)
+        for r, flags, line in items:
+            rr = QRect(r.x() - bound.x() + margin, r.y() - bound.y() + margin,
+                       r.width(), r.height())
+            _ls.draw_label_text(pp, rr, flags, line,
+                                self._label_style, self._label_font_px)
+        pp.end()
+        origin = QPoint(bound.x() - margin, bound.y() - margin)
+        self._label_pm_cache = (key, origin, pm)
+        return origin, pm
 
     @staticmethod
     def _wrap_elide(name: str, fm: QFontMetrics, width: int, max_lines: int) -> list:
@@ -817,7 +866,13 @@ class AppIcon(QWidget):
     def _slide_into_drag(self):
         if self._drag_loop or not self._dragged:
             return
-        self._press_pos = None
+        # 菜单关闭（_close_long_menu → aboutToHide → _on_long_menu_hidden）
+        # 会把 _press_pos 清成 None 防"误判单击"，但拖影跟随与命中/落点
+        # 计算都依赖这个抓取偏移——没有它拖影会冻结在原地、落点按错误
+        # 矩形计算。从按下时记录的全局坐标重建（长按期间图标未移动，
+        # 局部偏移仍有效）。
+        if self._press_pos is None and self._press_global is not None:
+            self._press_pos = self.mapFromGlobal(self._press_global)
         self.dragStarted.emit()
         self._exec_drag()
 

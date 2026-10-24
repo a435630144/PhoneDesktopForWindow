@@ -161,6 +161,11 @@ def main():
     with zipfile.ZipFile(zpath, "w") as zf:
         for f in EXAMPLE.rglob("*"):
             if f.is_file():
+                # 前面 build_spec 的 exec_module 会在暂存目录落下
+                # __pycache__/*.pyc——zip 里带它会被 ALLOWED_EXT 拒收，
+                # 测试就变成了"取决于是否开启字节码写入"。打包时排除。
+                if "__pycache__" in f.parts:
+                    continue
                 zf.write(f, f.relative_to(EXAMPLE))
     got = wp.import_zip(zpath)
     check("P7a zip 导入返回 spec", got.type == "hello", got.type)
@@ -180,6 +185,8 @@ def main():
     with zipfile.ZipFile(zpath2, "w") as zf:
         for f in EXAMPLE.rglob("*"):
             if f.is_file():
+                if "__pycache__" in f.parts:
+                    continue
                 zf.write(f, "hello/" + str(f.relative_to(EXAMPLE)))
     check("P7g 顶层多套一层目录也能导入",
           wp.import_zip(zpath2).type == "hello")

@@ -1335,11 +1335,6 @@ def free_slot(storage, page: int, w: int, h: int) -> Cell:
             x += cw
         y += ch
     return ox, oy
-    ox, oy = origin()
-    cols = storage.columns
-    col = max(0, min(int(col), cols - 1))
-    rel = max(0, int(row)) - current_page() * rows_per_page()
-    return ox + col * cw, oy + rel * ch
 
 
 def pos_cell(storage, x: int, y: int) -> Cell:

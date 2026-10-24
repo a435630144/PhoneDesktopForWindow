@@ -723,24 +723,6 @@ class FolderPopup(QWidget):
             if form is not None and form.isVisible():
                 form.show_beside(self)
         self.update()
-        # 2026-10-19 用户反馈"文件夹样式有时候出问题"：稳态必须铺满整个
-        # 窗口。开合动画中断 / 被 refresh 打断时 `_zoom` 可能停在中间值，
-        # 而 paintEvent 只按 zoom 缩放后的 rect 画玻璃——结果是"图标和工具
-        # 条都在、面板却只有中间一小块"。这里在没有动画在跑时强制归位，
-        # 并把整窗刷一次（几何变了，旧脏区不足以覆盖新尺寸）。
-        anim = getattr(self, "_open_anim", None)
-        try:
-            running = anim is not None and anim.state() == QAbstractAnimation.Running
-        except RuntimeError:
-            running = False
-        if not running:
-            self._zoom = 1.0
-        # 表单贴着弹窗：弹窗因成员增减改了大小，表单位置要跟着走
-        for attr in ("_tint_form", "_add_form"):
-            form = getattr(self, attr, None)
-            if form is not None and form.isVisible():
-                form.show_beside(self)
-        self.update()
 
     # ---------- 翻页（反馈 3：超容量左右分页） ----------
     def _set_page(self, page: int):

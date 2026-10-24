@@ -234,12 +234,16 @@ def main(app):
     check("P1a 初始只有一页", grid_flow.page_count(st2) == 1,
           str(grid_flow.page_count(st2)))
     st2.ensure_desktop_clone()
-    check("P1b 补页后有两页", grid_flow.page_count(st2) == 2,
-          str(grid_flow.page_count(st2)))
-    check("P1c 第二页是空白页", grid_flow.extra_pages(st2) == [1],
-          str(grid_flow.extra_pages(st2)))
+    # 旧断言 extra_pages==[1]（第二页必须空白）只在"本机桌面图标 ≤ 一页"
+    # 时成立：图标已铺满两页的机器上 ensure_second_page 按"保证至少 2 页"
+    # 的契约不补空白页（storage.ensure_second_page 文档语义），测试就变成
+    # 了机器相关。这里改为锁契约本身：≥2 页、且播种后页数稳定（幂等）。
+    pages1 = grid_flow.page_count(st2)
+    check("P1b 播种后至少两页", pages1 >= 2, str(pages1))
     st2.ensure_desktop_clone()
-    check("P2a 幂等（不反复补）", grid_flow.extra_pages(st2) == [1])
+    check("P1c 幂等（不反复补页）", grid_flow.page_count(st2) == pages1,
+          str(grid_flow.page_count(st2)))
+    check("P2a 幂等（不反复补）", grid_flow.page_count(st2) == pages1)
     st2.set_setting("extra_pages", [])
     st2.ensure_desktop_clone()
     check("P2b 用户删掉空白页后不再补", grid_flow.extra_pages(st2) == [],
@@ -259,8 +263,22 @@ def main(app):
     check("Z1c 纯净模式不写盘",
           "zen" not in json_dump(st3.path), "")
     win.toggle_zen()
-    check("Z2a 再触发恢复：图标全显",
-          not any(i.isHidden() for i in win.icons.values()))
+    # 旧断言"图标全显"只在单页桌面成立：多页机器上退出纯净后按分页规则
+    # 其它页本就该隐藏（_cull_page_icons 的"禁半截"契约）。锁真实契约：
+    # 当前页图标全显、其它页隐藏。
+    def _zen_exit_ok():
+        cur = grid_flow.current_page()
+        for eid, ic in win.icons.items():
+            e = st3.find_entry(eid)
+            if e is None:
+                continue
+            want = grid_flow.entry_page(st3, e) == cur
+            if want and ic.isHidden():
+                return False
+            if not want and ic.isVisible():
+                return False
+        return True
+    check("Z2a 再触发恢复：按分页规则显隐（当前页全显）", _zen_exit_ok())
     check("Z2b 恢复后仍在第 0 页且页点可画",
           win._zen is False and len(win._dot_centers()) >= 2)
 

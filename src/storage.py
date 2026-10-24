@@ -156,6 +156,9 @@ DEFAULT_SETTINGS = {
     "dock_position": "bottom",  # bottom（默认）| top | left | right
     "dock_items": [],           # [{"name","target","icon_path"}]，规范化见 dock.py
     "dock_seeded": False,       # 首次启用是否已用桌面现成应用填过（只填一次）
+    # Dock 两侧布置网格（新）：开启后水平 Dock 不再整边扣除网格，
+    # Dock 实际占住的格子禁放（dock.side_grid_blocked），两侧空区可摆图标
+    "dock_side_grid": False,
     # v10 A9（反馈 24）：Dock 外观（全部是"全局旋钮"，不进 dock_items）
     # v14 反馈 5：默认样式改成 iOS Dock 观感（更大图标 / 更松间距 / 更厚内边距 /
     # 更圆角 / 更透背景 / 更强 hover）。出厂值在这里，用户改过的值在各自
@@ -292,7 +295,14 @@ class Storage:
             with open(self.path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
         except Exception:
+            # B9：解析失败先备份原件再回退默认——否则回退后第一次 save()
+            # 就会拿"默认值+桌面重扫"把用户原布局永久覆盖
+            self._backup_corrupt()
             return  # 文件损坏时回退默认值，不崩溃
+        if not isinstance(raw, dict):
+            self._backup_corrupt()
+            return
+        self._sanitize_raw(raw)
         # 先记录文件里的真实 schema 版本（合并后会被默认值 2 覆盖，读不到旧值）
         raw_schema = 1
         if isinstance(raw.get("settings"), dict):
@@ -377,6 +387,39 @@ class Storage:
         if self.dedupe_folder_members():
             self.save()
 
+    def _backup_corrupt(self):
+        """把损坏的 state.json 改名留档（.corrupt-<时间戳>），保住用户原始数据。"""
+        try:
+            import datetime
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            bak = "%s.corrupt-%s" % (self.path, stamp)
+            if not os.path.exists(bak):
+                os.replace(self.path, bak)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _sanitize_raw(raw):
+        """B3：清洗"JSON 合法但元素类型不对"的结构损坏。
+
+        手改 / 半写入 / 旧版本 bug 可能让 layout/widgets 混入非 dict 项
+        （或整个键不是列表）。后续 _migrate/folder_member_ids 会对元素裸调
+        .get()，不清洗就是启动即崩（AttributeError）。类型不对的键视同
+        缺失交给默认值；列表只保留 dict 项，文件夹成员同理。
+        """
+        for key in ("layout", "widgets"):
+            val = raw.get(key)
+            if isinstance(val, list):
+                raw[key] = [x for x in val if isinstance(x, dict)]
+            elif key in raw:
+                del raw[key]
+        for e in raw.get("layout") or []:
+            apps = e.get("apps")
+            if isinstance(apps, list):
+                e["apps"] = [m for m in apps if isinstance(m, dict)]
+            elif "apps" in e:
+                del e["apps"]
+
     def _migrate(self, raw_schema: int = 2):
         """旧版本 state.json 兼容：
         1. 补齐新增的默认小组件（如桌面面板）；
@@ -409,11 +452,38 @@ class Storage:
 
     def save(self):
         """原子写入，避免写一半损坏。"""
+        tmp = None
         try:
             fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self.path), suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())  # 掉电/强杀时优先留旧文件而非 0 字节新文件
             os.replace(tmp, self.path)
+            tmp = None
+        except Exception as exc:
+            # M1：写失败（磁盘满 / 杀软锁文件）不能无声吞——布局此刻只在
+            # 内存里。落一条日志方便排查；tmp 清掉不残留。
+            try:
+                self._log_save_error(exc)
+            except Exception:
+                pass
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _log_save_error(exc):
+        log = str(data_file("storage_error.log"))
+        try:
+            if os.path.exists(log) and os.path.getsize(log) > 262144:
+                os.unlink(log)  # 简单轮转：超 256KB 重写，防无限增长
+            import datetime
+            with open(log, "a", encoding="utf-8") as f:
+                f.write("[%s] save failed: %r\n" % (
+                    datetime.datetime.now().isoformat(timespec="seconds"), exc))
         except Exception:
             pass
 
@@ -701,6 +771,7 @@ class Storage:
         # 2026-10-19 反馈 5：补位也要避开小组件占位，否则重叠时被挤出来的
         # 图标会落到时钟/便签的格子上（用户："整理布局会让组件和图标重叠"）
         widget_used = set(grid_flow.widget_cells(self))
+        widget_used |= self._side_blocked()   # dock_side_grid：Dock 占格同样禁放
         for e in sorted(self._data["layout"],
                         key=lambda x: (x.get("row", 0), x.get("col", 0))):
             col = max(0, min(cols - 1, int(e.get("col", 0))))
@@ -728,6 +799,7 @@ class Storage:
             return
         cols = max(2, int(self.columns))
         used = set(grid_flow.widget_cells(self))   # 组件占位（不可覆盖）
+        used |= self._side_blocked()               # dock_side_grid：Dock 占格禁放
         if pages is not None:
             rpp = grid_flow.rows_per_page()
             selected = {max(0, int(p)) for p in pages}
@@ -786,6 +858,18 @@ class Storage:
                 return e
         return None
 
+    def _side_blocked(self) -> set:
+        """dock_side_grid 开启时被 Dock 条带占住的格子（禁放集）。
+
+        关闭 / 垂直 Dock / 网格未就绪时为空集；失败静默退化为不禁
+        （禁放是功能增强，不能拖垮摆放主路径）。
+        """
+        try:
+            from . import dock as _dock
+            return _dock.side_grid_blocked(self)
+        except Exception:      # noqa: BLE001
+            return set()
+
     def _first_free_cell(self, exclude_id=None, extra_used=()):
         used = {(e.get("col", 0), e.get("row", 0)) for e in self._data["layout"] if e.get("id") != exclude_id}
         used |= set(extra_used or ())
@@ -798,9 +882,12 @@ class Storage:
         return col, row
 
     def first_free_cell(self, extra_used=()):
-        """第一个空格（可排除 widget 占位等额外占用）。"""
+        """第一个空格（排除 widget 占位 + Dock 禁放格 + 额外占用）。"""
         from . import grid_flow  # 延迟导入：grid_flow 依赖 storage 的尺寸访问器
-        return self._first_free_cell(extra_used=extra_used or grid_flow.widget_cells(self))
+        used = set(grid_flow.widget_cells(self)) | self._side_blocked()
+        if extra_used:
+            used |= set(extra_used)
+        return self._first_free_cell(extra_used=used)
 
     def add_app(self, app: dict, col=None, row=None) -> dict:
         """把应用 / 桌面文件添加到网格（默认第一个空格；指定格子被占时挤走占用者）。
@@ -842,10 +929,21 @@ class Storage:
         if col is None or row is None:
             col, row = self.first_free_cell()
         else:
-            occ = self.occupant(col, row)
-            if occ is not None:
-                nc, nr = self._first_free_cell(exclude_id=occ["id"])
-                occ["col"], occ["row"] = nc, nr
+            if (int(col), int(row)) in self._side_blocked():
+                # 落点在 Dock 禁放格上（拖文件到 Dock 区域）：改投第一个空格
+                col, row = self.first_free_cell()
+            else:
+                occ = self.occupant(col, row)
+                if occ is not None:
+                    # B8：被挤走的图标找新格必须与 first_free_cell 同样避开
+                    # 小组件占位——否则可能正好落在时钟/便签的格子上，
+                    # 图标与组件重叠（compact_layout 是带 widget_used 的）
+                    from . import grid_flow
+                    nc, nr = self._first_free_cell(
+                        exclude_id=occ["id"],
+                        extra_used=(set(grid_flow.widget_cells(self))
+                                    | self._side_blocked()))
+                    occ["col"], occ["row"] = nc, nr
         entry = {
             "id": entry_id,
             "type": "app",
@@ -981,6 +1079,7 @@ class Storage:
             return 0
         cols = max(2, int(self.columns))
         used = set(grid_flow.widget_cells(self))   # 组件占位（不可覆盖）
+        used |= self._side_blocked()               # dock_side_grid：Dock 占格禁放
         entries = sorted(self._data["layout"],
                          key=lambda e: (int(e.get("row", 0) or 0),
                                         int(e.get("col", 0) or 0)))

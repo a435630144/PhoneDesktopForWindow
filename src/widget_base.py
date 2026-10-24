@@ -303,11 +303,20 @@ class FloatingWidget(QWidget):
         self._closing = True
         QTimer.singleShot(400, self._really_close)
 
+    def _flush_pending(self):
+        """子类钩子：销毁前把防抖未落盘的数据刷进 entry（B14）。
+
+        便签/待办这类"编辑中"组件的数据在控件里，靠 QTimer 防抖写回
+        entry；销毁/退出时定时器不再触发，最后 0.3~0.6 秒的输入会丢。
+        有防抖落盘的子类覆写本方法：停表 + 立即写回。
+        """
+
     def _really_close(self):
         if getattr(self, "_closed", False):
             return
         self._closed = True
         self._closing = True
+        self._flush_pending()
         for a in list(getattr(self, "_anims", [])):
             try:
                 a.stop()
@@ -327,6 +336,7 @@ class FloatingWidget(QWidget):
         """
         self._closing = True
         self._closed = True
+        self._flush_pending()
         for a in list(getattr(self, "_anims", [])):
             try:
                 a.stop()

@@ -402,6 +402,14 @@ class WidgetLayer(QObject):
         for w in self.widgets.values():
             w.setVisible(on)
 
+    def flush_pending(self):
+        """B14：把所有组件防抖未落盘的数据立即刷进 entry（退出前调用）。"""
+        for w in list(self.widgets.values()):
+            try:
+                w._flush_pending()
+            except RuntimeError:
+                pass
+
     def toggle_entry(self, entry_id: str, visible: bool):
         entry = next((e for e in self.storage.widgets if e.get("id") == entry_id), None)
         if not entry:

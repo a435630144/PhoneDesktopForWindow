@@ -536,9 +536,11 @@ class DesktopWindow(QWidget):
         cw, ch = grid_flow.cell_size(self.storage)
         w = cw * cs + max(0, cs - 1) * 0
         h = ch * rs + max(0, rs - 1) * 0
+        pv = label_style.preview_style(self.storage)
+        if not pv.enabled:
+            return          # 设置 ▸ 图标 ▸ 预览框可整体关闭（反馈：不需要指示框）
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        pv = label_style.preview_style(self.storage)
         edge = QColor(pv.color)
         edge.setAlphaF(1.0)
         fill = QColor(pv.color)
@@ -635,8 +637,10 @@ class DesktopWindow(QWidget):
                 ic.hide()
             dock = getattr(self, "_dock", None)
             if dock is not None:
-                dock.hide()
+                # hide() 会同步清掉可见标志，必须先记录再隐藏，
+                # 否则退出纯净模式时 dock.show() 被恒 False 的条件挡住
                 self._zen_dock_was = dock.isVisible()
+                dock.hide()
             layer = getattr(self, "_widget_layer", None)
             if layer is not None:
                 layer.set_visible(False)
@@ -727,7 +731,9 @@ class DesktopWindow(QWidget):
         也能翻页，又不至于被触摸板微抖误触。已到首/末页时消费事件
         不再传递（没有上层需要）。原生模式不拦——滚轮还给真实桌面。
         """
-        if self._organize_mode():
+        if self._organize_mode() and not self._zen:
+            # B7：纯净模式下不翻页——图标都隐藏着，翻了也看不见，
+            # 反而会把图标 show() 出来穿透纯净态
             dy = e.angleDelta().y()
             dx = e.angleDelta().x()
             # 左右翻页模式下触控板横向滑动同样翻页（y 仍兼容鼠标滚轮）
@@ -1002,11 +1008,21 @@ class DesktopWindow(QWidget):
         icon = self.icons.get(self._drag_entry_id or "")
         ghost = getattr(icon, "_drag_ghost_w", None) if icon is not None else None
         if ghost is None:
-            return self._cell_at(fallback)
-        g = ghost.geometry()                # frameless 顶层：全局矩形
-        tl = self.mapFromGlobal(g.topLeft())
-        return grid_flow.cell_by_overlap(
-            self.storage, (tl.x(), tl.y(), g.width(), g.height()))
+            cell = self._cell_at(fallback)
+        else:
+            g = ghost.geometry()                # frameless 顶层：全局矩形
+            tl = self.mapFromGlobal(g.topLeft())
+            cell = grid_flow.cell_by_overlap(
+                self.storage, (tl.x(), tl.y(), g.width(), g.height()))
+        # dock_side_grid：Dock 条带占住的格子不放（无预览、松手回弹原位）
+        if cell is not None:
+            try:
+                from . import dock as _dock
+                if cell in _dock.side_grid_blocked(self.storage):
+                    return None
+            except Exception:      # noqa: BLE001
+                pass
+        return cell
 
     def _hl_rect(self, cell, span) -> QRect:
         """红框的窗口矩形（空 cell 返回空矩形）。绘制与脏区共用同一份定义。"""
@@ -1461,7 +1477,8 @@ class DesktopWindow(QWidget):
             entry = self.storage.find_entry(eid)
             if entry is None:
                 continue
-            want = grid_flow.entry_page(self.storage, entry) in keep
+            want = ((not self._zen) and
+                    grid_flow.entry_page(self.storage, entry) in keep)
             if want and icon.isHidden():
                 icon.show()
             elif not want and not icon.isHidden():
@@ -1476,7 +1493,7 @@ class DesktopWindow(QWidget):
                 continue
             if grid_flow.entry_page(self.storage, entry) == page:
                 icon.move(*self._entry_pos(entry))
-                if icon.isHidden():
+                if icon.isHidden() and not self._zen:
                     icon.show()
             elif not icon.isHidden():
                 icon.hide()
@@ -1495,7 +1512,8 @@ class DesktopWindow(QWidget):
             entry = self.storage.find_entry(eid)
             if entry is None:
                 continue
-            icon.setVisible(grid_flow.entry_page(self.storage, entry) == page)
+            icon.setVisible((not self._zen) and
+                            grid_flow.entry_page(self.storage, entry) == page)
 
     def _cull_moved_icons(self, moves: dict):
         """按位移清单复核可见性（v6 §4）：落到当前页的显示、别页的隐藏。
@@ -3134,8 +3152,39 @@ class DesktopWindow(QWidget):
                 self._popup.refresh()
             return
 
-        dragged = self.storage.find_entry(dragged_payload)
-        if dragged is None or dragged["id"] == target["id"]:
+        # B5：多选拖动的 payload 是 "id1,id2,..."（逗号串），旧实现把整串
+        # 当单个 id 查找 → find_entry 返回 None → 静默吞掉。拆开逐个并入；
+        # 语义固定为"落点目标承载文件夹"，目标先是图标就升级成文件夹
+        ids = [i for i in str(dragged_payload).split(",") if i]
+        ids = [i for i in ids if i != target["id"]]
+        if not ids:
+            return
+        if len(ids) > 1:
+            if target["type"] != "folder":
+                first = self.storage.find_entry(ids[0])
+                if first is None:
+                    return
+                members = [m for m in (target.get("app"), first.get("app")) if m]
+                target["type"] = "folder"
+                target["app"] = {}     # 同上：None 会让链式 `.get` 在文件夹上炸
+                target["apps"] = members
+                self.storage.remove_entry(first["id"])
+                rest = ids[1:]
+            else:
+                rest = ids
+            for eid in rest:
+                e = self.storage.find_entry(eid)
+                if e is not None and e["id"] != target["id"]:
+                    self._absorb(target, e)
+            self.storage.compact_layout()
+            self.storage.save()
+            self._sync_structure()
+            if self._popup is not None:
+                self._popup.refresh()
+            return
+
+        dragged = self.storage.find_entry(ids[0])
+        if dragged is None:
             return
 
         if dragged["type"] == "folder" and target["type"] == "folder":
@@ -4049,7 +4098,10 @@ class DesktopWindow(QWidget):
         elif e.key() == Qt.Key_Delete and self._selected:
             self._remove_selected()
         elif e.key() == Qt.Key_A and (e.modifiers() & Qt.ControlModifier):
-            self._selected = set(self.icons.keys())
+            # B6：与长按菜单的 _select_all 统一语义——只选当前页。
+            # 旧实现选了所有页（含隐藏页），Ctrl+A 后 Delete 会把
+            # 用户看不见的图标一并删掉
+            self._select_all()
             self._refresh_selection()
         elif e.key() == Qt.Key_Z and (e.modifiers() & Qt.ControlModifier):
             # Ctrl+Z：布局撤销（让位 / 多选平移，指导文档 §2.3）

@@ -269,9 +269,9 @@ class DesktopHotkeys(QObject):
         vk = int(vk) or self._pressed_vk()
         if vk not in (VK_C, VK_V):
             return False
-        now = time.monotonic()
-        if (now - self._last_at) * 1000.0 < REPEAT_GUARD_MS:
-            return True                     # 长按重复：吞掉但不重复动作
+        # S7：重复保护必须放在 target 判定**之后**——放在前面的话，桌面动作
+        # 触发后的 350ms 窗口内用户切到别的应用按 Ctrl+C/V 会被无条件吞掉，
+        # 违背本模块"宁可漏一次，不可误吞一次"的纪律
         try:
             target = (self._target_check() if self._target_check is not None
                       else target_ok(self._own_hwnds()))
@@ -279,6 +279,9 @@ class DesktopHotkeys(QObject):
             target = False
         if not target:
             return False
+        now = time.monotonic()
+        if (now - self._last_at) * 1000.0 < REPEAT_GUARD_MS:
+            return True                     # 长按重复：吞掉但不重复动作
         if vk == VK_C:
             try:
                 if not self._can_copy():

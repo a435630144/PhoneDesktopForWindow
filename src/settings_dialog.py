@@ -781,6 +781,9 @@ class SettingsDialog(QDialog):
         self.storage.set_setting(
             "dock_position",
             dock.normalize_position(self.cmb_dock_pos.currentData()))
+        if ctl("chk_dock_side_grid") is not None:
+            self.storage.set_setting(
+                "dock_side_grid", bool(self.chk_dock_side_grid.isChecked()))
         if ctl("sp_dock_icon") is not None:
             self.storage.set_setting(
                 "dock_icon", int(self.sp_dock_icon.value()))
@@ -827,7 +830,8 @@ class SettingsDialog(QDialog):
                      "sld_dock_alpha",
                      "cmb_dock_radius", "chk_dock_hover", "chk_dock_dot",
                      "sld_dock_border", "chk_dock_border_auto",
-                     "chk_dock_center", "sp_dock_offx", "sp_dock_offy"):
+                     "chk_dock_center", "sp_dock_offx", "sp_dock_offy",
+                     "chk_dock_side_grid"):
             w = ctl(name)
             if w is not None:
                 w.setEnabled(on)
@@ -923,6 +927,17 @@ class SettingsDialog(QDialog):
         self._row(c, card, i18n.T("settings.general.dock_position.title"),
                   self.cmb_dock_pos,
                   i18n.T("settings.general.dock_position.hint"))
+
+        # Dock 两侧布置网格（新）：开启后不再整边扣除网格，Dock 实际
+        # 占住的格子禁放，条带较短时两侧空区照常摆图标
+        self.chk_dock_side_grid = Switch()
+        self.chk_dock_side_grid.setChecked(
+            bool(self.storage.get_setting("dock_side_grid")))
+        self.chk_dock_side_grid.setEnabled(on)
+        self.chk_dock_side_grid.toggled.connect(self._apply_dock)
+        self._row(c, card, i18n.T("settings.general.dock_side_grid.title"),
+                  self.chk_dock_side_grid,
+                  i18n.T("settings.general.dock_side_grid.hint"))
         lay.addWidget(card)
 
         # ---- v11（反馈 29）：尺寸与间距。用户的诉求是"dock 栏的大小、
@@ -1389,6 +1404,16 @@ class SettingsDialog(QDialog):
         # ---- 卡片二：移动预览框（反馈 13） ----
         card2, c2 = self._card(body, i18n.T("settings.icons.card.preview"),
                                reset_fn=self._reset_cell_preview)
+        # 整体开关：不需要落点指示框的用户可以完全关掉（新反馈）
+        self.chk_cell_preview_enabled = Switch()
+        _pv_on = self.storage.get_setting("cell_preview_enabled")
+        self.chk_cell_preview_enabled.setChecked(
+            _pv_on is None or bool(_pv_on))
+        self.chk_cell_preview_enabled.toggled.connect(
+            self._apply_cell_preview_enabled)
+        self._row(c2, card2, i18n.T("settings.icons.preview.enabled.title"),
+                  self.chk_cell_preview_enabled,
+                  i18n.T("settings.icons.preview.enabled.hint"))
         self.cmb_cell_preview = ComboBox()
         for key, label, _c in _ls.PREVIEW_PRESETS:
             self.cmb_cell_preview.addItem(
@@ -1667,6 +1692,10 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("label_outline_width", int(v))
         self._label_style_changed()
 
+    def _apply_cell_preview_enabled(self, on: bool):
+        """落点指示框整体开关（关闭 = 拖动时不画预览框）。"""
+        self.storage.set_setting("cell_preview_enabled", bool(on))
+
     def _apply_cell_preview_preset(self, idx):
         key = self.cmb_cell_preview.currentData()
         if key == "custom":
@@ -1756,7 +1785,7 @@ class SettingsDialog(QDialog):
         self._label_style_changed()
 
     def _reset_cell_preview(self):
-        """预览框回出厂（现行红框：DANGER + 8% 填充 + 2px + R8）。"""
+        """预览框回出厂（现行红框：DANGER + 8% 填充 + 2px + R8 + 开）。"""
         from . import label_style as _ls
         d = _ls.default_preview_style()
         self.storage.set_setting("cell_preview_color", "")
@@ -1764,6 +1793,11 @@ class SettingsDialog(QDialog):
                                  int(round(d.fill_alpha * 100)))
         self.storage.set_setting("cell_preview_width", d.width)
         self.storage.set_setting("cell_preview_radius", d.radius)
+        self.storage.set_setting("cell_preview_enabled", True)
+        if hasattr(self, "chk_cell_preview_enabled"):
+            self.chk_cell_preview_enabled.blockSignals(True)
+            self.chk_cell_preview_enabled.setChecked(True)
+            self.chk_cell_preview_enabled.blockSignals(False)
         self._cell_preview_color = ""
         self._sync_cell_preview_color_btn()
         self.sld_cell_preview_fill.blockSignals(True)

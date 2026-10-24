@@ -242,6 +242,12 @@ def download(entry: dict) -> str:
     只有"每个候选都 404"才判定该镜像没有这个包。
     """
     want = str(entry.get("sha256") or "").strip().lower()
+    if not want:
+        # S2：sha256 缺失一律拒装——清单和 zip 同源，缺校验时信任链只剩
+        # "镜像账号 + TLS"，任一仓库被盗即供应链 RCE。宁可装不了也不能放行
+        raise StoreError(
+            "商店清单没有提供该组件的 sha256 校验值，已拒绝安装。\n"
+            "（这是防投毒保护；可到组件仓库核对清单或稍后重试）")
     errors = []
     for name, base in mirror_order():
         try:

@@ -283,6 +283,12 @@ class TodoWidget(GlassWidget):
         self.entry["items"] = serialize(self.entry["items"])
         self.storage.save()
 
+    def _flush_pending(self):
+        # B14：销毁/退出时防抖定时器不再触发，最后一次编辑直接刷盘
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+            self._save()
+
     def _on_add(self):
         self._set_items(add_item(self.items(), self.edit.text()))
         self.edit.clear()

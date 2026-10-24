@@ -50,7 +50,10 @@ def model_now(now: Optional[QDateTime] = None, settings: Optional[dict] = None) 
     show_sec = s.get("show_seconds", True)
     show_date = s.get("show_date", True)
     wd = n.toString("dddd")
-    return ClockModel(hhmm=n.toString("HH:mm"), ss=n.toString("ss"),
+    # L5：不显示秒时 ss 留空——模型按值比较，ss 每秒都变会让"整分钟才
+    # 重绘"的短路（m == self._model）永远不成立，等于白优化
+    return ClockModel(hhmm=n.toString("HH:mm"),
+                      ss=(n.toString("ss") if show_sec else ""),
                       date=n.toString("M月d日"),
                       weekday=_WEEKDAYS_CN.get(wd, wd),
                       show_seconds=bool(show_sec), show_date=bool(show_date))
