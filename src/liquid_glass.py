@@ -96,7 +96,10 @@ SATURATION_MIN, SATURATION_MAX = 100, 200
 FROST_MIN, FROST_MAX = 0, 100
 ABERRATION_MIN, ABERRATION_MAX = 0, 100
 RIMLIGHT_MIN, RIMLIGHT_MAX = 0, 100
-LIVE_FPS = 30               # 拖动时折射重算上限（约 33ms 一次）
+LIVE_FPS = 45               # 拖动时折射重算上限（约 22ms 一次；v14f 30->45，
+                            # 用户反馈 30fps 内容滞后"不跟手"。45 在 60Hz 屏上
+                            # 每帧预算 16.6ms 内仍留得住：125% 缩放一次重算
+                            # 约 3~5ms，200% 大组件约 8~12ms 也不至于拖死拖拽）
 
 
 @dataclass(frozen=True)
