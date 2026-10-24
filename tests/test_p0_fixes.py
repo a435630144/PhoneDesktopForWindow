@@ -93,7 +93,7 @@ def test_settings(st):
 
     # v11 反馈 32：开发者选项单独成页，网格原点随整组搬过去（「高级」只留
     # 维护 / 更新 / 关于）。断言随之改成"在开发者页、且不在其它页"。
-    dev_page = dlg._pages.get("developer")
+    dev_page = dlg._pages.get("advanced")   # v14h：开发者页并入高级页
     layout_page = dlg._pages.get("layout")
     if dev_page is not None and getattr(dlg, "chk_origin", None) is not None:
         check("F1 原点控件在「开发者」页",

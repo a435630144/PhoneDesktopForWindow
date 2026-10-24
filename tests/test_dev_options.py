@@ -110,7 +110,7 @@ def main(app):
     # ---------- V2 / V3 / V4 设置页 ----------
     st = make_state(dev=False)
     dlg = SettingsDialog(SimpleNamespace(attached=True, update=lambda: None),
-                         st, None, page="developer")
+                         st, None, page="advanced")
     check("V2 开发者分页已选中", dlg.stack.currentIndex() == 7,
           "idx=%d" % dlg.stack.currentIndex())
     subs = getattr(dlg, "_dev_switches", {})

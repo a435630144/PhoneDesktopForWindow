@@ -165,7 +165,7 @@ class DesktopWindow(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAcceptDrops(True)
-        self.setWindowTitle("桌面整理Demo")
+        self.setWindowTitle(i18n.T("app.name"))   # v14h：遗留 Demo 名纠正
         # 桌面带守护：Win+D / 切屏等导致漂移时自动拉回桌面带
         self._band_guard = BandGuard(self, on_tick=self._on_guard_tick)
         # 桌面目录监听（v6 §7.4）：由 set_auto_sync 按设置启停，不在构造时启动

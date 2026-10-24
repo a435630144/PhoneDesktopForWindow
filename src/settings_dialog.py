@@ -17,7 +17,7 @@
 from PySide6.QtCore import (Property, QElapsedTimer, QEasingCurve,
                             QPropertyAnimation, QSize, Qt, QTimer, QUrl)
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication,
-                           QIcon, QPainter, QPen)
+                           QIcon, QPainter, QPen, QPixmap)
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox,
                                QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSlider,
@@ -137,13 +137,18 @@ def open_settings(window, storage, layer, page="general"):
 
 
 class SettingsDialog(QDialog):
-    # v9 V2：新增「组件库」分页（原独立窗口融合进来，BUG1 从结构上消失）
-    # v14 反馈 3：「图标」独立分页——文字颜色/阴影/描边 + cell 预览框样式
-    # （反馈 13）。塞进「外观与图标」会让那页变成两屏，图标规则值得自己的页。
+    # v9 V2：「组件库」分页（原独立窗口融合进来，BUG1 从结构上消失）
+    # v14h 重梳理（用户反馈：有的页不用单独分 sheet、有的内容放错页）：
+    #   * 原「外观与图标」拆解——图标尺寸/占比两张卡归「图标与标签」页
+    #     （图标的事都在一页）；悬浮模式不透明度归「模式」页（悬浮是交互
+    #     模式的一部分）；液态玻璃参数多（9 个滑条/开关 + 渲染频率），
+    #     独立成「液态玻璃」页；
+    #   * 「开发者」并入「高级」——两页各只有两三张卡，合并后一页刚好；
+    #   * 9 页 -> 8 页。
     NAV = (("general", "通用"), ("widgets", "组件库"), ("dock", "Dock 栏"),
-           ("appearance", "外观与图标"), ("icons", "图标"),
+           ("icons", "图标与标签"), ("liquid", "液态玻璃"),
            ("layout", "布局与网格"),
-           ("mode", "模式"), ("developer", "开发者"), ("advanced", "高级"))
+           ("mode", "模式"), ("advanced", "高级"))
 
     def __init__(self, window, storage, layer, parent=None, page=None):
         super().__init__(parent)
@@ -218,10 +223,22 @@ class SettingsDialog(QDialog):
         lay.setSpacing(6)
 
         brand = QHBoxLayout()
-        logo = QLabel(i18n.T("settings.brand_logo"))
+        # v14h：logo 用托盘同款应用图标（assets/app_icon.png），不再画
+        # 文字字徽；图标读不到时退回字徽（不留空方块）
+        logo = QLabel()
         logo.setObjectName("brandLogo")
         logo.setFixedSize(34, 34)
         logo.setAlignment(Qt.AlignCenter)
+        try:
+            from .paths import asset_path
+            _pm = QPixmap(asset_path("app_icon.png"))
+            if not _pm.isNull():
+                logo.setPixmap(_pm.scaled(26, 26, Qt.KeepAspectRatio,
+                                          Qt.SmoothTransformation))
+            else:
+                logo.setText(i18n.T("settings.brand_logo"))
+        except Exception:      # noqa: BLE001
+            logo.setText(i18n.T("settings.brand_logo"))
         names = QVBoxLayout()
         names.setSpacing(0)
         t1 = QLabel(i18n.T("settings.brand"))
@@ -1179,97 +1196,12 @@ class SettingsDialog(QDialog):
         if hook is not None:
             hook()
 
-    def _page_appearance(self, body, lay):
-        card, c = self._card(body, i18n.T("settings.appearance.card.icons"))
-        self.cmb_tier = ComboBox()
-        # v10 A4（反馈 10 规则 2）：「中（= 原生）」是行为解释进控件标签，
-        # 去掉；原生等价关系由右侧「图标 Npx」读数与下面
-        # 「按系统桌面图标尺寸计算」一行自证。
-        for label, tier in (("小", "small"), ("中", "medium"),
-                            ("大", "large"), ("自定义", "custom")):
-            self.cmb_tier.addItem(
-                i18n.TL("settings.appearance.tier." + tier, label), tier)
-        cur_tier = self.storage.icon_tier()
-        self.cmb_tier.setCurrentIndex(max(0, self.cmb_tier.findData(cur_tier)))
-        self.cmb_tier.currentIndexChanged.connect(self._apply_icon_tier)
-        self.lbl_icon_px = QLabel()
-        self.lbl_icon_px.setObjectName("rowHint")
-        tier_box = QWidget()
-        tb = QHBoxLayout(tier_box)
-        tb.setContentsMargins(0, 0, 0, 0)
-        tb.setSpacing(10)
-        tb.addWidget(self.lbl_icon_px)
-        tb.addWidget(self.cmb_tier)
-        self._row(c, card, i18n.T("settings.appearance.icon_size.title"),
-                  tier_box, i18n.T("settings.appearance.icon_size.hint"))
+    def _page_liquid(self, body, lay):
+        """液态玻璃页（v14h）：原「外观与图标」页的液态玻璃卡独立成页。
 
-        # v7 B2（反馈 9）：第四档「自定义」才启用滑条。三档是预设，
-        # 滑条跟着值显示但不可拖——旧实现滑条常驻可拖，用户拖完档位
-        # 显示值又跳回最近预设，看着像"逻辑有问题"。
-        self.sld_icon_fit = QSlider(Qt.Horizontal)
-        self.sld_icon_fit.setRange(30, 90)
-        self.sld_icon_fit.setFixedWidth(190)
-        self.lbl_icon_fit = QLabel()
-        self.lbl_icon_fit.setObjectName("rowHint")
-        self.lbl_icon_fit.setFixedWidth(46)
-        self.sld_icon_fit.valueChanged.connect(self._apply_icon_fit)
-        fit_box = QWidget()
-        fb = QHBoxLayout(fit_box)
-        fb.setContentsMargins(0, 0, 0, 0)
-        fb.setSpacing(8)
-        fb.addWidget(self.sld_icon_fit)
-        fb.addWidget(self.lbl_icon_fit)
-        # 括号保留：30%~90% 是取值域（规则 1 唯一放行的一种括号）。
-        self._row(c, card, i18n.T("settings.appearance.icon_fit.title"),
-                  fit_box, i18n.T("settings.appearance.icon_fit.hint"))
-        lay.addWidget(card)
-        self._refresh_icon_labels()
-
-        # 反馈 12：**已配置额外大小的图标**管理区。
-        # 存在意义是"反悔入口"——把图标缩到 30% 会小到点不到，右键菜单
-        # 都调不出来；这里可以一键恢复 100%。
-        card, c = self._card(body, i18n.T("settings.appearance.card.scaled"))
-        self._scaled_box = QVBoxLayout()
-        self._scaled_box.setContentsMargins(0, 0, 0, 0)
-        self._scaled_box.setSpacing(4)
-        holder = QWidget(card)
-        holder.setLayout(self._scaled_box)
-        c.addWidget(holder)
-        self._scaled_rows = []
-        lay.addWidget(card)
-        self._refresh_scaled_icons()
-
-        card, c = self._card(body, i18n.T("settings.appearance.card.look"))
-        self.sld_opacity = QSlider(Qt.Horizontal)
-        self.sld_opacity.setRange(50, 100)
-        self.sld_opacity.setFixedWidth(190)
-        self.sld_opacity.setValue(int(float(self.storage.get_setting("opacity")) * 100))
-        self.lbl_opacity = QLabel("%d%%" % self.sld_opacity.value())
-        self.lbl_opacity.setObjectName("rowHint")
-        self.lbl_opacity.setFixedWidth(46)
-        self.sld_opacity.valueChanged.connect(self._apply_opacity)
-        # v10 A8（反馈 14）：**挂载桌面层时这个设置不生效**——整理层是分层
-        # 窗口，`setWindowOpacity` 对内容无效（`_show_current_mode()` 在挂载
-        # 分支一律置 1.0），且分层窗的全局 alpha 会连带命中测试一起变
-        # （透明区穿透的教训）。所以挂载态直接把滑条置灰并说明原因，
-        # 不再让用户拖一个看不出变化的滑条。
-        self._opacity_attached = bool(getattr(self.window, "attached", False))
-        self.sld_opacity.setEnabled(not self._opacity_attached)
-        op_box = QWidget()
-        ob = QHBoxLayout(op_box)
-        ob.setContentsMargins(0, 0, 0, 0)
-        ob.setSpacing(8)
-        ob.addWidget(self.sld_opacity)
-        ob.addWidget(self.lbl_opacity)
-        # v10 A4（反馈 10 规则 3）：标签已写「悬浮模式」，hint 不再复读
-        # 「当前为悬浮模式」；只留挂载态这一条真正新增的信息。
-        self._row(c, card, i18n.T("settings.appearance.opacity.title"),
-                  op_box,
-                  i18n.T("settings.appearance.opacity.hint_attached")
-                  if self._opacity_attached else
-                  i18n.T("settings.appearance.opacity.hint_free"))
-        lay.addWidget(card)
-
+        参数已有 9 个（总闸 + 折射/光学 6 项 + 渲染频率 2 项），值得整页；
+        图标尺寸两张卡挪去「图标与标签」，悬浮不透明度挪去「模式」。
+        """
         # ---------- v14 反馈 9：液态玻璃 ----------
         # 一张卡管全部 liquid_* 键（`liquid_glass.py` 是唯一读取入口）：
         # 总开关 + 三个表面开关 + 三个强度滑条 + 扫光开关。强度为 0 的
@@ -1402,15 +1334,74 @@ class SettingsDialog(QDialog):
 
     # ---------- 图标分页（v14 反馈 3 / 反馈 13） ----------
     def _page_icons(self, body, lay):
-        """标签文字样式 + 移动预览框样式。
+        """图标与标签（v14h 重梳理由：图标的事都在一页）。
 
-        两个卡片各管一组键（`label_style.py` 是唯一读取入口），全部实时
-        生效：文字样式走 `window.apply_label_style()`（换样式对象 + 重画，
-        不重建图标），预览框下次拖拽自然用新值。
+        尺寸/占比两张卡从原「外观与图标」页搬来（原页面已改造成液态
+        玻璃专页）；标签文字 + 移动预览框不变。`label_style.py` 仍是
+        标签样式的唯一读取入口，实时生效。
         """
         from . import label_style as _ls
 
-        # ---- 卡片一：标签文字 ----
+        # ---- 卡片：图标尺寸与占比（v14h 自外观页迁入） ----
+        card, c = self._card(body, i18n.T("settings.appearance.card.icons"))
+        self.cmb_tier = ComboBox()
+        # v10 A4（反馈 10 规则 2）：「中（= 原生）」是行为解释进控件标签，
+        # 去掉；原生等价关系由右侧「图标 Npx」读数自证。
+        for label, tier in (("小", "small"), ("中", "medium"),
+                            ("大", "large"), ("自定义", "custom")):
+            self.cmb_tier.addItem(
+                i18n.TL("settings.appearance.tier." + tier, label), tier)
+        cur_tier = self.storage.icon_tier()
+        self.cmb_tier.setCurrentIndex(max(0, self.cmb_tier.findData(cur_tier)))
+        self.cmb_tier.currentIndexChanged.connect(self._apply_icon_tier)
+        self.lbl_icon_px = QLabel()
+        self.lbl_icon_px.setObjectName("rowHint")
+        tier_box = QWidget()
+        tb = QHBoxLayout(tier_box)
+        tb.setContentsMargins(0, 0, 0, 0)
+        tb.setSpacing(10)
+        tb.addWidget(self.lbl_icon_px)
+        tb.addWidget(self.cmb_tier)
+        self._row(c, card, i18n.T("settings.appearance.icon_size.title"),
+                  tier_box, i18n.T("settings.appearance.icon_size.hint"))
+
+        # v7 B2（反馈 9）：第四档「自定义」才启用滑条。三档是预设，
+        # 滑条跟着值显示但不可拖——旧实现滑条常驻可拖，用户拖完档位
+        # 显示值又跳回最近预设，看着像"逻辑有问题"。
+        self.sld_icon_fit = QSlider(Qt.Horizontal)
+        self.sld_icon_fit.setRange(30, 90)
+        self.sld_icon_fit.setFixedWidth(190)
+        self.lbl_icon_fit = QLabel()
+        self.lbl_icon_fit.setObjectName("rowHint")
+        self.lbl_icon_fit.setFixedWidth(46)
+        self.sld_icon_fit.valueChanged.connect(self._apply_icon_fit)
+        fit_box = QWidget()
+        fb = QHBoxLayout(fit_box)
+        fb.setContentsMargins(0, 0, 0, 0)
+        fb.setSpacing(8)
+        fb.addWidget(self.sld_icon_fit)
+        fb.addWidget(self.lbl_icon_fit)
+        # 括号保留：30%~90% 是取值域（规则 1 唯一放行的一种括号）。
+        self._row(c, card, i18n.T("settings.appearance.icon_fit.title"),
+                  fit_box, i18n.T("settings.appearance.icon_fit.hint"))
+        lay.addWidget(card)
+        self._refresh_icon_labels()
+
+        # ---- 卡片：已配置额外大小的图标（v14h 自外观页迁入） ----
+        # 存在意义是"反悔入口"——把图标缩到 30% 会小到点不到，右键菜单
+        # 都调不出来；这里可以一键恢复 100%。
+        card, c = self._card(body, i18n.T("settings.appearance.card.scaled"))
+        self._scaled_box = QVBoxLayout()
+        self._scaled_box.setContentsMargins(0, 0, 0, 0)
+        self._scaled_box.setSpacing(4)
+        holder = QWidget(card)
+        holder.setLayout(self._scaled_box)
+        c.addWidget(holder)
+        self._scaled_rows = []
+        lay.addWidget(card)
+        self._refresh_scaled_icons()
+
+        # ---- 卡片：标签文字 ----
         card, c = self._card(body, i18n.T("settings.icons.card.text"),
                              reset_fn=self._reset_label_text)
 
@@ -2112,6 +2103,39 @@ class SettingsDialog(QDialog):
         c.addWidget(self.lbl_interaction)
         lay.addWidget(card)
 
+        # ---- v14h：悬浮模式不透明度（自原「外观」页迁入——悬浮是交互
+        # 模式的一部分，放这里才对题） ----
+        card, c = self._card(body, i18n.T("settings.appearance.card.look"))
+        self.sld_opacity = QSlider(Qt.Horizontal)
+        self.sld_opacity.setRange(50, 100)
+        self.sld_opacity.setFixedWidth(190)
+        self.sld_opacity.setValue(int(float(self.storage.get_setting("opacity")) * 100))
+        self.lbl_opacity = QLabel("%d%%" % self.sld_opacity.value())
+        self.lbl_opacity.setObjectName("rowHint")
+        self.lbl_opacity.setFixedWidth(46)
+        self.sld_opacity.valueChanged.connect(self._apply_opacity)
+        # v10 A8（反馈 14）：**挂载桌面层时这个设置不生效**——整理层是分层
+        # 窗口，`setWindowOpacity` 对内容无效（`_show_current_mode()` 在挂载
+        # 分支一律置 1.0），且分层窗的全局 alpha 会连带命中测试一起变
+        # （透明区穿透的教训）。所以挂载态直接把滑条置灰并说明原因，
+        # 不再让用户拖一个看不出变化的滑条。
+        self._opacity_attached = bool(getattr(self.window, "attached", False))
+        self.sld_opacity.setEnabled(not self._opacity_attached)
+        op_box = QWidget()
+        ob = QHBoxLayout(op_box)
+        ob.setContentsMargins(0, 0, 0, 0)
+        ob.setSpacing(8)
+        ob.addWidget(self.sld_opacity)
+        ob.addWidget(self.lbl_opacity)
+        # v10 A4（反馈 10 规则 3）：标签已写「悬浮模式」，hint 不再复读
+        # 「当前为悬浮模式」；只留挂载态这一条真正新增的信息。
+        self._row(c, card, i18n.T("settings.appearance.opacity.title"),
+                  op_box,
+                  i18n.T("settings.appearance.opacity.hint_attached")
+                  if self._opacity_attached else
+                  i18n.T("settings.appearance.opacity.hint_free"))
+        lay.addWidget(card)
+
         card, c = self._card(body, i18n.T("settings.mode.card.takeover"))
         # 反馈 16：**启动即接管**——「接管系统桌面」开关冗余，已删除。
         # 想回到原生桌面就退出程序；只想用小组件就把「通用 → 显示桌面
@@ -2154,19 +2178,17 @@ class SettingsDialog(QDialog):
         # （v14 追加：已移到「布局与网格 ▸ 文件夹」卡——那里才是文件夹设置）
         lay.addWidget(card)
 
-    def _page_developer(self, body, lay):
-        """开发者（v11 反馈 32）：总开关 + 分项开关 + 网格原点。
+    def _page_advanced(self, body, lay):
+        """高级页（v14h 吸并原「开发者」页）：调试叠加层 / 网格原点 +
+        维护 / 更新 / 关于——原两页各只有两三张卡，合并后一页刚好。
 
-        旧实现把"网格调试信息"一个开关当成全部开发者功能：打开就是满屏
-        网格线 + 组件红底 + 帧率 + 窗口巡检全上，想只看帧率做不到；关掉
-        则连原点定位也一起锁死。现在拆成：
+        开发者分项（v11 反馈 32）：总开关 dev_mode 关 = 下面全部失效：
 
-            总开关（dev_mode）  ── 关 = 下面全部失效且不可交互
-              ├─ 网格线 / 原点 / 几何信息   dev_grid
-              ├─ 组件碰撞体积               dev_widget_collision
-              ├─ 帧率与绘制面积             dev_perf
-              ├─ 组件窗口一致性巡检         dev_window_check
-              └─ 网格原点定位（手动位置）    grid_origin_mode
+            ├─ 网格线 / 原点 / 几何信息   dev_grid
+            ├─ 组件碰撞体积               dev_widget_collision
+            ├─ 帧率与绘制面积             dev_perf
+            ├─ 组件窗口一致性巡检         dev_window_check
+            └─ 网格原点定位（手动位置）    grid_origin_mode
 
         分项默认全开：总开关打开后的行为与旧版一致（零迁移成本）。
         """
@@ -2243,7 +2265,7 @@ class SettingsDialog(QDialog):
         self._sync_origin_controls()
         self._sync_dev_controls()
 
-    def _page_advanced(self, body, lay):
+        # ---- 维护与关于（原高级页内容） ----
         card, c = self._card(body, i18n.T("settings.advanced.card.maintain"))
         btns = QWidget()
         bh = QHBoxLayout(btns)
