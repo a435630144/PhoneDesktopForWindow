@@ -413,6 +413,55 @@ def main(app):
     check("V5d stale 同参数为假",
           not live.stale(rect_b, 20, lens_frz))
 
+    # ---------- F1-F3 v14g 渲染频率档位 ----------
+    stf = _st("fps.json")
+    check("F1 默认档位 medium = 45fps", lg.live_fps(stf) == 45,
+          str(lg.live_fps(stf)))
+    for mode, want in (("low", 30), ("medium", 45), ("high", 60)):
+        stf.set_setting("liquid_fps_mode", mode)
+        check("F1b 档位 %s -> %dfps" % (mode, want),
+              lg.live_fps(stf) == want, str(lg.live_fps(stf)))
+    stf.set_setting("liquid_fps_mode", "custom")
+    stf.set_setting("liquid_fps_custom", 144)
+    check("F1c 自定义 144 生效", lg.live_fps(stf) == 144)
+    stf.set_setting("liquid_fps_custom", 5)
+    check("F1d 自定义下界夹 24", lg.live_fps(stf) == 24,
+          str(lg.live_fps(stf)))
+    stf.set_setting("liquid_fps_custom", 999)
+    check("F1e 自定义上界夹 240", lg.live_fps(stf) == 240)
+    stf.set_setting("liquid_fps_mode", "乱写")
+    check("F1f 垃圾档位回 medium=45", lg.live_fps(stf) == 45)
+    check("F1g normalize 暴露 custom", lg.normalize_fps_mode("CUSTOM") == "custom")
+
+    th = lg.Throttle(lambda: 2)          # 2fps -> 500ms 间隔，判据稳
+    check("F2 Throttle 走 provider", th._resolve() == 2)
+    check("F2b ready 首次放行", th.ready() is True)
+    check("F2c 间隔内不放行", th.ready() is False)
+    th2 = lg.Throttle(lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    check("F2d provider 抛异常回默认", th2._resolve() == lg.LIVE_FPS)
+    check("F2e 无参构造 = LIVE_FPS", lg.Throttle()._resolve() == lg.LIVE_FPS)
+
+    # 组件接线：节流器跟随设置档位（改档位即时生效，无需重建）
+    from src import widget_glass
+
+    class _Probe2(widget_glass.GlassWidget):
+        def paint_content(self, p):
+            pass
+
+    stp = _st("probe_fps.json")
+    p_w = _Probe2(stp, {"id": "pf", "kind": "probe", "span": (2, 2),
+                        "settings": {}})
+    check("F3 组件节流器读设置档位",
+          p_w._lens_throttle._resolve() == 45,
+          str(p_w._lens_throttle._resolve()))
+    stp.set_setting("liquid_fps_mode", "low")
+    check("F3b 改档位即时生效（provider 重解）",
+          p_w._lens_throttle._resolve() == 30)
+    stp.set_setting("liquid_fps_mode", "custom")
+    stp.set_setting("liquid_fps_custom", 144)
+    check("F3c 自定义 144 到达组件", p_w._lens_throttle._resolve() == 144)
+    p_w.close()
+
     # ---------- S1-S4 设置面板 ----------
     from src import settings_dialog
 
@@ -458,6 +507,22 @@ def main(app):
           and not dlg.sld_liquid_aberration.isEnabled()
           and not dlg.sld_liquid_rimlight.isEnabled())
     dlg.chk_liquid.setChecked(True)
+    # v14g：渲染频率档位
+    check("S2h 渲染频率下拉默认 medium",
+          dlg.cmb_liquid_fps.currentData() == "medium",
+          str(dlg.cmb_liquid_fps.currentData()))
+    check("S2i 非自定义档位下步进器置灰",
+          not dlg.sp_liquid_fps.isEnabled())
+    dlg.cmb_liquid_fps.setCurrentIndex(
+        dlg.cmb_liquid_fps.findData("high"))
+    check("S2j 档位写入", st5.get_setting("liquid_fps_mode") == "high")
+    dlg.cmb_liquid_fps.setCurrentIndex(
+        dlg.cmb_liquid_fps.findData("custom"))
+    check("S2k 自定义档位 -> 步进器可调",
+          dlg.sp_liquid_fps.isEnabled())
+    dlg.sp_liquid_fps.setValue(120)
+    check("S2l 自定义值写入", st5.get_setting("liquid_fps_custom") == 120,
+          str(st5.get_setting("liquid_fps_custom")))
     dlg._reset_liquid()
     check("S3 恢复默认 %d / %d" % (lg.DEFAULT_STRENGTH, lg.DEFAULT_BAND),
           st5.get_setting("liquid_strength") == lg.DEFAULT_STRENGTH
@@ -469,6 +534,11 @@ def main(app):
           and st5.get_setting("liquid_frost") == lg.DEFAULT_FROST
           and st5.get_setting("liquid_aberration") == lg.DEFAULT_ABERRATION
           and st5.get_setting("liquid_rimlight") == lg.DEFAULT_RIMLIGHT)
+    check("S3d 恢复默认覆盖频率档位（medium/60）",
+          st5.get_setting("liquid_fps_mode") == lg.DEFAULT_FPS_MODE
+          and st5.get_setting("liquid_fps_custom") == lg.DEFAULT_FPS_CUSTOM,
+          "%s/%s" % (st5.get_setting("liquid_fps_mode"),
+                     st5.get_setting("liquid_fps_custom")))
     check("S3b 文件夹悬停开关仍在布局页", hasattr(dlg, "chk_hover_folder"))
 
     check("S4 Dock 分页有液态玻璃开关", hasattr(dlg, "chk_dock_liquid"))

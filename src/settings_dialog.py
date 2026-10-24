@@ -1355,6 +1355,48 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.appearance.liquid.rimlight.title"),
                   rim_box,
                   i18n.T("settings.appearance.liquid.rimlight.hint"))
+
+        # v14g：渲染频率档位（性能调节）。低 30 / 中 45 / 高 60 / 自定义。
+        # 自定义值建议 = 显示器刷新率（hint 里动态显示当前 Hz）——再高只是
+        # 白白重算，还会把拖拽本身拖卡。
+        self.cmb_liquid_fps = ComboBox()
+        for mode, key in (("low", "settings.appearance.liquid.fps.low"),
+                          ("medium", "settings.appearance.liquid.fps.medium"),
+                          ("high", "settings.appearance.liquid.fps.high"),
+                          ("custom", "settings.appearance.liquid.fps.custom")):
+            self.cmb_liquid_fps.addItem(i18n.T(key), mode)
+        self.cmb_liquid_fps.setCurrentIndex(max(0, self.cmb_liquid_fps.findData(
+            liquid_glass.normalize_fps_mode(
+                self.storage.get_setting("liquid_fps_mode")))))
+        self.cmb_liquid_fps.currentIndexChanged.connect(
+            self._apply_liquid_fps_mode)
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.fps.title"),
+                  self.cmb_liquid_fps,
+                  i18n.T("settings.appearance.liquid.fps.hint"))
+
+        # 自定义档位才可调的帧率步进器（其余档位禁用不隐藏，行高不跳）
+        hz = 0.0
+        screen = QGuiApplication.primaryScreen()
+        try:
+            hz = float(screen.refreshRate()) if screen else 0.0
+        except (AttributeError, RuntimeError, TypeError):
+            hz = 0.0
+        self.sp_liquid_fps = Stepper()
+        self.sp_liquid_fps.setRange(liquid_glass.FPS_CUSTOM_MIN,
+                                    liquid_glass.FPS_CUSTOM_MAX)
+        self.sp_liquid_fps.setSuffix(" fps")
+        self.sp_liquid_fps.setValue(int(self.storage.get_setting(
+            "liquid_fps_custom") or liquid_glass.DEFAULT_FPS_CUSTOM))
+        self.sp_liquid_fps.setEnabled(
+            self.cmb_liquid_fps.currentData() == "custom")
+        self.sp_liquid_fps.valueChanged.connect(self._apply_liquid_fps_custom)
+        hz_txt = ("%d" % round(hz)) if hz >= 1.0 else "?"
+        self._row(cq, card_lq,
+                  i18n.T("settings.appearance.liquid.fps_custom.title"),
+                  self.sp_liquid_fps,
+                  i18n.T("settings.appearance.liquid.fps_custom.hint",
+                         hz=hz_txt))
         lay.addWidget(card_lq)
         self._sync_liquid_controls()
 
@@ -1634,8 +1676,11 @@ class SettingsDialog(QDialog):
         on = bool(self.chk_liquid.isChecked())
         for w in (self.sld_liquid_strength, self.sld_liquid_band,
                   self.sld_liquid_saturation, self.sld_liquid_frost,
-                  self.sld_liquid_aberration, self.sld_liquid_rimlight):
+                  self.sld_liquid_aberration, self.sld_liquid_rimlight,
+                  self.cmb_liquid_fps):
             w.setEnabled(on)
+        self.sp_liquid_fps.setEnabled(
+            on and self.cmb_liquid_fps.currentData() == "custom")
 
     def _liquid_changed(self):
         """液态玻璃任何一项改动：防抖落盘 + 推三个表面重绘。"""
@@ -1683,6 +1728,17 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("liquid_rimlight", v)
         self._liquid_changed()
 
+    def _apply_liquid_fps_mode(self, *_):
+        mode = self.cmb_liquid_fps.currentData()
+        if mode:
+            self.storage.set_setting("liquid_fps_mode", str(mode))
+        self.sp_liquid_fps.setEnabled(mode == "custom")
+        self._liquid_changed()
+
+    def _apply_liquid_fps_custom(self, v):
+        self.storage.set_setting("liquid_fps_custom", int(v))
+        self._liquid_changed()
+
     def _reset_liquid(self):
         """液态玻璃整卡回出厂（总闸开 + 默认光学参数）。"""
         defaults = (("liquid_glass", True),
@@ -1692,7 +1748,9 @@ class SettingsDialog(QDialog):
                     ("liquid_saturation", liquid_glass.DEFAULT_SATURATION),
                     ("liquid_frost", liquid_glass.DEFAULT_FROST),
                     ("liquid_aberration", liquid_glass.DEFAULT_ABERRATION),
-                    ("liquid_rimlight", liquid_glass.DEFAULT_RIMLIGHT))
+                    ("liquid_rimlight", liquid_glass.DEFAULT_RIMLIGHT),
+                    ("liquid_fps_mode", liquid_glass.DEFAULT_FPS_MODE),
+                    ("liquid_fps_custom", liquid_glass.DEFAULT_FPS_CUSTOM))
         for k, v in defaults:
             self.storage.set_setting(k, v)
         # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
@@ -1716,6 +1774,13 @@ class SettingsDialog(QDialog):
             sld.setValue(v)
             sld.blockSignals(False)
             lbl.setText("%d%s" % (v, sld._liquid_suffix))
+        self.cmb_liquid_fps.blockSignals(True)
+        self.cmb_liquid_fps.setCurrentIndex(max(
+            0, self.cmb_liquid_fps.findData(liquid_glass.DEFAULT_FPS_MODE)))
+        self.cmb_liquid_fps.blockSignals(False)
+        self.sp_liquid_fps.blockSignals(True)
+        self.sp_liquid_fps.setValue(liquid_glass.DEFAULT_FPS_CUSTOM)
+        self.sp_liquid_fps.blockSignals(False)
         self._sync_liquid_controls()
         self._liquid_changed()
 

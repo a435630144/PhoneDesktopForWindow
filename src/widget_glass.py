@@ -177,8 +177,11 @@ class GlassWidget(FloatingWidget):
     def __init__(self, storage, entry, interactive: bool = False):
         super().__init__(storage, entry, interactive=interactive)
         # v14 反馈 10：折射底图跟着位置/壁纸实时重算
+        # v14g：重算频率走设置档位（低/中/高/自定义），provider 每次
+        # 触发时重解——改档位不用重建组件，即时生效
         self._lens = liquid_glass.LiveLens()
-        self._lens_throttle = liquid_glass.Throttle()
+        self._lens_throttle = liquid_glass.Throttle(
+            lambda: liquid_glass.live_fps(self.storage))
         self._lens_timer = QTimer(self)
         self._lens_timer.setSingleShot(True)
         self._lens_timer.timeout.connect(self.update)

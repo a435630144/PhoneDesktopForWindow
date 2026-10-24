@@ -139,6 +139,8 @@ DEFAULT_SETTINGS = {
     "liquid_frost": 100,            # 磨砂程度 %（0 = 清透玻璃，100 = 全磨砂）
     "liquid_aberration": 0,         # 边缘色散 %（0 = 关；默认不做彩边）
     "liquid_rimlight": 0,           # 边缘高光 %（0 = 关；默认不描高光）
+    "liquid_fps_mode": "medium",    # 拖动重算频率档位（low=30/medium=45/high=60/custom）
+    "liquid_fps_custom": 60,        # 自定义 fps（24~240；建议=显示器刷新率）
     "auto_sync_desktop": True,  # 监听桌面目录自动同步（v6 §7.4：新增/删除/
                                 # 重命名 debounce 1s 后增量更新，不重排已有布局）
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，

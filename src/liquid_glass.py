@@ -96,10 +96,15 @@ SATURATION_MIN, SATURATION_MAX = 100, 200
 FROST_MIN, FROST_MAX = 0, 100
 ABERRATION_MIN, ABERRATION_MAX = 0, 100
 RIMLIGHT_MIN, RIMLIGHT_MAX = 0, 100
-LIVE_FPS = 45               # 拖动时折射重算上限（约 22ms 一次；v14f 30->45，
+LIVE_FPS = 45               # 拖动时折射重算默认（约 22ms 一次；v14f 30->45，
                             # 用户反馈 30fps 内容滞后"不跟手"。45 在 60Hz 屏上
                             # 每帧预算 16.6ms 内仍留得住：125% 缩放一次重算
                             # 约 3~5ms，200% 大组件约 8~12ms 也不至于拖死拖拽）
+# v14g：渲染频率档位（用户可调）。low 更省、high 最跟手、custom 自定。
+FPS_MODES = {"low": 30, "medium": 45, "high": 60}
+FPS_CUSTOM_MIN, FPS_CUSTOM_MAX = 24, 240
+DEFAULT_FPS_MODE = "medium"          # 与 LIVE_FPS 对应的档位
+DEFAULT_FPS_CUSTOM = 60              # 自定义缺省（多数屏 60Hz）
 
 
 @dataclass(frozen=True)
@@ -176,6 +181,29 @@ def lens_style(storage) -> Lens:
     return Lens(strength=strength / 100.0, band=float(band),
                 saturation=saturation / 100.0, frost=frost / 100.0,
                 aberration=aberration / 100.0, rimlight=rimlight / 100.0)
+
+
+def normalize_fps_mode(v) -> str:
+    """档位清洗：low/medium/high/custom，垃圾值回 medium。"""
+    s = str(v or "").strip().lower()
+    if s in FPS_MODES or s == "custom":
+        return s
+    return DEFAULT_FPS_MODE
+
+
+def live_fps(storage) -> int:
+    """拖动重算频率（fps）：档位（30/45/60）或自定义（夹 24~240）。
+
+    设置面板只写 `liquid_fps_mode` / `liquid_fps_custom` 两个键，这里唯一
+    求值；`Throttle` 通过 provider 每次触发时重解——改档位即时生效，不用
+    重建组件。
+    """
+    mode = normalize_fps_mode(_get(storage, "liquid_fps_mode", DEFAULT_FPS_MODE))
+    if mode in FPS_MODES:
+        return FPS_MODES[mode]
+    v = _clamp(_get(storage, "liquid_fps_custom", DEFAULT_FPS_CUSTOM),
+               FPS_CUSTOM_MIN, FPS_CUSTOM_MAX, DEFAULT_FPS_CUSTOM)
+    return int(round(v))
 
 
 def master_enabled(storage) -> bool:
@@ -717,20 +745,40 @@ class LiveLens:
 
 
 class Throttle:
-    """把"每帧都要重算"的动作压到 `LIVE_FPS`（拖动时别把主线程拖满）。"""
+    """把"每帧都要重算"的动作压到目标 fps（拖动时别把主线程拖满）。
 
-    def __init__(self, fps: int = LIVE_FPS):
-        self._gap = 1.0 / max(1, int(fps))
+    `fps` 可以是整数，也可以是 provider（无参可调用，返回 int）——传
+    `lambda: live_fps(self.storage)` 即可让设置里的渲染频率档位**即时**
+    生效：每次 ready()/due_ms() 都重解一次（provider 只做一次 dict 读，
+    每个 move 事件一次的开销可以忽略）。
+    """
+
+    def __init__(self, fps=None):
+        self._fps = LIVE_FPS if fps is None else fps
         self._last = 0.0
 
+    def _resolve(self) -> int:
+        f = self._fps
+        if callable(f):
+            try:
+                f = f()
+            except Exception:        # noqa: BLE001 —— provider 挂了用默认
+                f = LIVE_FPS
+        try:
+            return max(1, int(round(float(f))))
+        except (TypeError, ValueError):
+            return LIVE_FPS
+
     def ready(self) -> bool:
+        gap = 1.0 / self._resolve()
         now = time.perf_counter()
-        if now - self._last >= self._gap:
+        if now - self._last >= gap:
             self._last = now
             return True
         return False
 
     def due_ms(self) -> int:
         """距离下一次允许执行还有多少毫秒（给单次定时器用）。"""
-        left = self._gap - (time.perf_counter() - self._last)
+        gap = 1.0 / self._resolve()
+        left = gap - (time.perf_counter() - self._last)
         return max(1, int(round(left * 1000)))
