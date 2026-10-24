@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.0.2（v14c）**，本版把**液态玻璃**改成了**实时折射**（玻璃里的壁纸图案跟着组件位置走、换壁纸自动跟上，不再有高光 / 色散 / 描边），并让它成为**一种配色**——文件夹在色板第一颗「透明圆片」选，小组件、Dock 栏在各自设置里开关，开启时颜色不可调。此前的 8.0.0 带来 **iOS 风格 Dock**、**天气组件分尺寸布局**（4×2 多出湿度 / 风力与三天温程条）、**图标文字样式**与**移动预览框样式自定义**、**纯净模式**、**文件夹悬停自动展开** 等一批交互改进。**103 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.1.0（v14d）**，本版是全量代码体检（《代码分析报告 2026-10-25》）落地的**修复批次**——state.json 损坏备份 / 元素类型清洗 / fsync 三重防护、组件商店 sha256 硬校验、纯净模式与拖拽等 14 项交互修复，并新增 **Dock 两侧布置网格**（水平 Dock 只禁实际压住的格子）、**原生观感图标文字阴影**、**可关的落点指示框**。此前的 8.0.2 把**液态玻璃**改成**实时折射**并让它成为**一种配色**；8.0.0 带来 **iOS 风格 Dock**、**天气组件分尺寸布局**（4×2 多出湿度 / 风力与三天温程条）等一批交互改进。**103 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.0.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.1.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -208,6 +208,13 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.1.0（v14d）· 2026-10-25 修复批次：数据安全 + 安全加固 + Dock 两侧网格 → [发布说明](docs/release_notes/8.1.0.md)
+
+- **数据安全**：state.json 损坏先备份 `.corrupt-<时间戳>` 再回退 + 元素类型清洗（不再启动即崩）+ 保存 fsync / 失败写 `storage_error.log`
+- **安全加固**：组件商店 sha256 改硬校验（清单缺哈希 = 拒装）；键盘钩子先判焦点再拦截，不再吞其它应用的键
+- **修复 14 项**（编号见代码分析报告）：纯净模式退出 Dock 消失 / 翻页穿透、手机模式拖影冻结、多选拖入文件夹静默失效、Ctrl+A 跨页全选、商店下载冻 UI、便签待办退出丢最后输入等
+- **新功能**：**Dock 两侧布置网格**（`dock_side_grid`，只禁 Dock 实际压住的格子）；标签阴影还原 Windows 原生；hover 放大文字不抽动；液态玻璃磨砂 / 折射同源消色差；落点指示框可关（`cell_preview_enabled`）
 
 ### 8.0.2（v14c）· 液态玻璃：实时折射 + 成为一种配色 → [发布说明](docs/release_notes/8.0.2.md)
 

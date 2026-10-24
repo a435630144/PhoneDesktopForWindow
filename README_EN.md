@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.0.2 (v14c)**, which turns **liquid glass** into a **real-time refraction** (the wallpaper inside the glass follows the widget as you drag it, and follows a wallpaper change without a restart; no highlights, dispersion or bright rims) and makes it **a colour choice**: pick the **transparent swatch** in the folder palette, or flip the switch in a widget's or the Dock's own settings — colour and opacity are locked while it is on. The 8.0.0 line brought the **iOS-style Dock**, **size-specific widget layouts** (the weather widget's 4×2 adds humidity/wind and a three-day temperature-range bar), **icon label styling**, **drag preview box styling**, **pure mode** and **hover-to-expand folders**. **103 test files green**. Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.1.0 (v14d)**, a fix batch landing the full code audit (*Code Analysis Report 2026-10-25*): three layers of state.json protection (corrupt-file backup, element-type sanitising, fsync'd saves), a mandatory sha256 check for store downloads, 14 interaction bug fixes (pure mode, drag-and-drop and more), plus a **grid beside the Dock** option (a horizontal Dock only blocks the cells it actually covers), **Windows-native label shadows** and a **switch for the drag preview box**. The preceding 8.0.2 turned **liquid glass** into a **real-time refraction** and made it **a colour choice**; the 8.0.0 line brought the **iOS-style Dock** and **size-specific widget layouts** (the weather widget's 4×2 adds humidity/wind and a three-day temperature-range bar). **103 test files green**. Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v8.0.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.1.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-103%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -207,6 +207,13 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.1.0 (v14d) · 2026-10-25 fix batch: data safety + hardening + grid beside the Dock → [notes](docs/release_notes/8.1.0.md)
+
+- **Data safety**: a corrupt state.json is renamed to `.corrupt-<timestamp>` before falling back; malformed element types are sanitised (no more crash on start); saves are fsync'd and failures log to `storage_error.log`
+- **Hardening**: store downloads now require a matching sha256 (a missing hash means refuse to install); the global hotkey hook checks desktop focus before swallowing keys
+- **14 fixes** (numbered in the audit report): Dock lost after leaving pure mode / page flips leaking through it, frozen drag ghost in phone-style interaction, multi-select-into-folder silently failing, Ctrl+A selecting every page, store downloads freezing the UI, notes/todo losing the last edit on exit, and more
+- **New**: **grid beside a horizontal Dock** (`dock_side_grid` — only the cells the Dock actually covers are blocked); Windows-native label shadow; jitter-free label rendering while hover-zooming; liquid-glass frost/refraction sampled from one backdrop (colour mismatch gone); the drag preview box can be turned off (`cell_preview_enabled`)
 
 ### 8.0.2 (v14c) · Liquid glass: real-time refraction + a colour choice → [notes](docs/release_notes/8.0.2.md)
 
