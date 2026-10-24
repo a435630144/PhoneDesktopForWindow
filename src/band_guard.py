@@ -37,6 +37,13 @@
 from PySide6.QtCore import QObject, QTimer
 
 from . import win32_layer
+from .win32_layer import attach_to_desktop
+
+# 复活风暴防护：观察窗 120 秒内最多复活 8 次——桌面层若被第三方
+# （桌面整理软件 / 显示桌面切换）反复拆毁，拉锯只会让窗口每 1.5 秒
+# 闪一次；超过阈值改为恢复原生图标并干净退出。
+_REVIVE_WINDOW_S = 120
+_REVIVE_MAX = 8
 
 
 class BandGuard(QObject):
@@ -44,6 +51,8 @@ class BandGuard(QObject):
         super().__init__(parent)
         self._items = []  # [(hwnd, layer)]：本守护负责的窗口（共享全局层表）
         self._on_tick = on_tick  # 每轮额外回调（如保持原生图标隐藏）
+        self._widgets = {}  # hwnd -> weakref(widget)：句柄被外部销毁后的复活依据
+        self._revives = []  # 最近复活时刻（monotonic），防复活风暴
         self._progman = win32_layer._progman()
         self._in_show_desktop = False
         self._timer = QTimer(self)
@@ -67,6 +76,11 @@ class BandGuard(QObject):
         if (hwnd, layer) not in self._items:
             self._items = [(h, ly) for h, ly in self._items if h != hwnd]
             self._items.append((hwnd, layer))
+        try:
+            import weakref
+            self._widgets[hwnd] = weakref.ref(widget)
+        except Exception:
+            pass
         win32_layer.set_band_layer(hwnd, layer)
         if not self._timer.isActive():
             self._timer.start()
@@ -77,6 +91,7 @@ class BandGuard(QObject):
         except Exception:
             return
         self._items = [(h, ly) for h, ly in self._items if h != hwnd]
+        self._widgets.pop(hwnd, None)
         win32_layer.unregister_band_window(hwnd)
         if not self._items and self._timer.isActive():
             self._timer.stop()
@@ -93,6 +108,15 @@ class BandGuard(QObject):
                 self._in_show_desktop = False
                 win32_layer.enforce_band_order(progman)
                 self._tick_hook()
+                return
+
+            # 2026-10-25 事故（用户实机）：桌面层窗口被外部销毁（explorer
+            # 并未重启——疑似第三方桌面整理/显示桌面切换连带清理了跨进程
+            # 子窗口），Qt 事件循环照常跑但所有原生窗口消失，进程变成
+            # "无窗口僵尸"：不退出、不重建、原生图标停在隐藏态。这里先于
+            # 一切检查做死亡检测：死句柄留在 _items 里，后续 enforce/
+            # restore 全部空转，永远发现不了。
+            if self._revive_dead_windows():
                 return
 
             wins = win32_layer._enum_zorder()
@@ -140,6 +164,67 @@ class BandGuard(QObject):
             return
         try:
             self._on_tick()
+        except Exception:
+            pass
+
+    # ---------- 窗口死亡自愈（2026-10-25 事故补） ----------
+    def _revive_dead_windows(self) -> bool:
+        """检测并复活被外部销毁的受护窗口。本轮处理过死亡返回 True。
+
+        正常轮次零成本（每个句柄一次 IsWindow）；只有句柄死亡才走复活：
+        Qt 控件对象还活着的话 hide()+show() 会重建原生窗口，随后重新挂回
+        桌面带并以新句柄登记——对用户等价于"桌面闪了一下又回来了"，
+        而不是进程无声变僵尸、原生图标被永久扣在隐藏态。
+
+        两个退路：
+        - 复活风暴（观察窗内超过 _REVIVE_MAX 次）：桌面层在被第三方反复
+          拆毁，拉锯无意义——恢复原生图标并干净退出（退出链上的
+          aboutToQuit/atexit 会再恢复一次，幂等）。
+        - 全部受护窗口死亡且无活控件可复活：同样恢复 + 退出。
+        """
+        import time as _time
+        now = _time.monotonic()
+        self._revives = [t for t in self._revives if now - t < _REVIVE_WINDOW_S]
+        dead = [(h, ly) for h, ly in self._items
+                if not win32_layer._user32.IsWindow(h)]
+        if not dead:
+            return False
+        for hwnd, layer in dead:
+            self._items = [(h, ly) for h, ly in self._items if h != hwnd]
+            win32_layer.unregister_band_window(hwnd)
+            ref = self._widgets.pop(hwnd, None)
+            widget = ref() if ref is not None else None
+            if widget is None:
+                continue
+            if len(self._revives) >= _REVIVE_MAX:
+                self._give_up_and_exit()
+                return True
+            try:
+                # 探针结论（tools 同款实验）：外部销毁后 hide()/show() 和
+                # createWinId() 都会拿回**陈旧死句柄**不重建；只有
+                # destroy()+show() 会真正重建原生窗口。
+                widget.destroy()
+                widget.show()
+                attach_to_desktop(widget, layer=layer)
+                self._revives.append(_time.monotonic())
+                self.track(widget, layer=layer)
+            except Exception:
+                continue
+        if not self._items and self._timer.isActive():
+            self._give_up_and_exit()
+        return True
+
+    def _give_up_and_exit(self):
+        """放弃拉锯：恢复原生图标，让应用走正常退出（不留在僵尸态）。"""
+        try:
+            self._items = []
+            self._widgets = {}
+            win32_layer.restore_native_icons()
+        except Exception:
+            pass
+        try:
+            from PySide6.QtWidgets import QApplication
+            QApplication.quit()
         except Exception:
             pass
 
