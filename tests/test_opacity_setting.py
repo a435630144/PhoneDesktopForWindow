@@ -1,21 +1,16 @@
-"""v10 A8（反馈 14）：悬浮模式不透明度——三种状态各就各位。
+# -*- coding: utf-8 -*-
+"""v14i：悬浮兜底不透明度固定化——`opacity` 用户设置退役。
 
-诉求：设置 ▸ 外观与图标 ▸「悬浮模式不透明度」拖动后要真有效果。
+历史：v10 A8（反馈 14）把"悬浮模式不透明度"做成挂载态置灰的滑条；v14h
+梳理时迁到「模式」页；v14i 用户定论——悬浮形态只是**挂载失败的兜底**
+（正常机器永远见不到），为它留一个"挂载态永远无效"的设置只会造成困惑，
+改用固定值 `desktop_window.FLOATING_OPACITY`（=0.95，即原出厂默认）。
 
-根因（已核）：`opacity` 设置确实被写入，也确实在 `_enter_floating_mode()` 里
-`setWindowOpacity(...)`；但 `_show_current_mode()` 在**挂载成功**分支末尾无条件
-`setWindowOpacity(1.0)`——而正常路径全是挂载成功，所以正常机器上怎么拖都没反应。
-
-修法（指导文档_v10 §2.8 决策点 2「选定方案：禁用 + 说明」）：
-  - 挂载态：桌面层是分层窗口，`setWindowOpacity` 对内容无效，且全局 alpha 会
-    连带命中测试一起变（透明区穿透坑 #39 的教训）→ 滑条置灰 + hint 说明，
-    窗口侧恒 1.0（O6 锁这条）；
-  - 悬浮态：`_apply_opacity` 直落 `setWindowOpacity`（O2），托盘隐藏/再现经
-    `show_desktop()` → `_show_current_mode()` 的 else 分支早返回进
-    `_enter_floating_mode()` 重新读 storage，用户值不丢（O4/O5 锁这条）。
-
-关于指导文档同节决策点 3（「把 `_show_current_mode` 的 1.0 改成读 opacity」）：
-**已作废**——见 O5/O6 的注释与指导文档 §2.8 的作废记录。
+判据：
+  O1 DEFAULT_SETTINGS 不再有 opacity 键；设置面板不再有 sld_opacity
+  O2 兜底窗不透明度恒 0.95——老 state.json 里残留 0.42 也不受影响
+  O3 悬挂态托盘隐藏/再现往返仍是 0.95（固定值不依赖 storage）
+  O4 挂载态恒 1.0（分层窗全局 alpha 会连带命中测试——透明区穿透的教训）
 
 运行：python tests/test_opacity_setting.py   （offscreen）
 """
@@ -23,7 +18,6 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -50,18 +44,15 @@ def make_state(opacity=0.95):
         STATE.unlink()
     st = Storage(path=str(STATE))
     st._data["settings"]["auto_clone_desktop"] = False
-    st._data["settings"]["opacity"] = opacity
+    st._data["settings"]["opacity"] = opacity   # 模拟老用户 state.json 残留
     st._data["layout"] = []
     st.save()
     return st
 
 
 class OpacitySpy:
-    """记录 setWindowOpacity 的调用值。
-
-    不真的调 Qt 那个方法——offscreen 平台下 `windowOpacity()` 不保证回显，
-    记录调用值才是确定性的判据。
-    """
+    """记录 setWindowOpacity 的调用值（offscreen 下不保证回显，记录调用
+    值才是确定性判据）。"""
 
     def __init__(self):
         self.calls = []
@@ -71,81 +62,57 @@ class OpacitySpy:
 
 
 def main(app):
-    # ---------- O1：默认值 ----------
-    check("O1 DEFAULT_SETTINGS opacity 默认 0.95",
-          DEFAULT_SETTINGS.get("opacity") == 0.95,
+    # ---------- O1：设置退役 ----------
+    check("O1 DEFAULT_SETTINGS 不再有 opacity 键",
+          "opacity" not in DEFAULT_SETTINGS,
           "%s" % DEFAULT_SETTINGS.get("opacity"))
+    st = make_state(opacity=0.42)
+    dlg = SettingsDialog(type("W", (), {"attached": False})(), st, None)
+    check("O1b 设置面板不再有不透明度滑条", not hasattr(dlg, "sld_opacity"))
+    check("O1c 常量固定 0.95", dw.FLOATING_OPACITY == 0.95,
+          "%.2f" % dw.FLOATING_OPACITY)
+    dlg.deleteLater()
 
-    # ---------- O2：设置窗拖动 -> 悬浮态直落窗口 ----------
-    st = make_state(opacity=0.95)
-    spy = OpacitySpy()
-    fw = SimpleNamespace(update=lambda: None, rebuild=lambda: None,
-                         attached=False, setWindowOpacity=spy)
-    dlg = SettingsDialog(fw, st, None)
-    dlg._apply_opacity(72)
-    check("O2 悬浮态拖动后窗口收到 0.72",
-          bool(spy.calls) and spy.calls[-1] == 0.72, "calls=%s" % spy.calls)
-    check("O2 setting 同步落 0.72",
-          abs(st.get_setting("opacity") - 0.72) < 1e-9,
-          "%s" % st.get_setting("opacity"))
+    # ---------- O2：兜底窗恒 0.95（残留值不影响） ----------
+    w2 = DesktopWindow(make_state(opacity=0.42))
+    w2.resize(1920, 1040)
+    spy2 = OpacitySpy()
+    w2.setWindowOpacity = spy2
+    w2._enter_floating_mode()
+    check("O2 兜底窗不透明度恒 0.95（无视残留 0.42）",
+          bool(spy2.calls) and spy2.calls[-1] == 0.95, "calls=%s" % spy2.calls)
 
-    # ---------- O3：挂载态 -> 窗口恒 1.0（滑条置灰外的双保险） ----------
-    st3 = make_state(opacity=0.95)
+    # ---------- O3：悬挂态托盘隐藏/再现往返仍是 0.95 ----------
+    w3 = DesktopWindow(make_state(opacity=0.42))
+    w3.resize(1920, 1040)
+    w3.attached = False
+    w3._attach_known_failed = True        # 挂载失败过的悬浮态
     spy3 = OpacitySpy()
-    fw3 = SimpleNamespace(update=lambda: None, rebuild=lambda: None,
-                          attached=True, setWindowOpacity=spy3)
-    dlg3 = SettingsDialog(fw3, st3, None)
-    dlg3._apply_opacity(72)
-    check("O3 挂载态下窗口被保持 1.0",
-          bool(spy3.calls) and spy3.calls[-1] == 1.0, "calls=%s" % spy3.calls)
-    check("O3 挂载态滑条置灰（A8 主修法）", not dlg3.sld_opacity.isEnabled())
+    w3.setWindowOpacity = spy3
+    w3.show_desktop()                     # 托盘再现的真实入口
+    check("O3 悬挂态再现后仍是 0.95",
+          bool(spy3.calls) and spy3.calls[-1] == 0.95, "calls=%s" % spy3.calls)
 
-    # ---------- O4：真窗 _enter_floating_mode 读 storage ----------
-    st4 = make_state(opacity=0.72)
-    w4 = DesktopWindow(st4)
+    # ---------- O4：挂载态恒 1.0（有意为之，不是漏改） ----------
+    # 分层窗全局 alpha 会连带命中测试（透明区穿透坑 #39 的教训），挂载
+    # 分支的 1.0 是 v10 A8 决策点 2 的选定方案，固定化后继续成立。
+    w4 = DesktopWindow(make_state(opacity=0.42))
     w4.resize(1920, 1040)
+    w4.attached = True
     spy4 = OpacitySpy()
     w4.setWindowOpacity = spy4
-    w4._enter_floating_mode()
-    check("O4 悬浮兜底用 storage 里的 0.72",
-          bool(spy4.calls) and spy4.calls[-1] == 0.72, "calls=%s" % spy4.calls)
-
-    # ---------- O5：悬挂态托盘隐藏/再现往返不掉值 ----------
-    # 指导文档 §2.8 决策点 3 本想靠"改挂载分支的 1.0"实现这个目标；实际悬挂态
-    # 走 show_desktop() → _show_current_mode() 的 else 分支**早返回**进
-    # _enter_floating_mode()，目标本就满足——点 3 因此作废（见指导文档记录）。
-    st5 = make_state(opacity=0.72)
-    w5 = DesktopWindow(st5)
-    w5.resize(1920, 1040)
-    w5.attached = False
-    w5._attach_known_failed = True        # 挂载失败过的悬浮态
-    spy5 = OpacitySpy()
-    w5.setWindowOpacity = spy5
-    w5.show_desktop()                     # 托盘再现的真实入口
-    check("O5 悬挂态再现后仍是 0.72（决策点 3 的目标已满足）",
-          bool(spy5.calls) and spy5.calls[-1] == 0.72, "calls=%s" % spy5.calls)
-
-    # ---------- O6：挂载态 _show_current_mode 恒 1.0 ----------
-    # 决策点 2 的选定方案：挂载态必须不透明（分层窗全局 alpha 会连带命中测试，
-    # 且与组件玻璃的视觉语言冲突）。挂载分支的 1.0 是**有意为之**，不是漏改。
-    st6 = make_state(opacity=0.72)
-    w6 = DesktopWindow(st6)
-    w6.resize(1920, 1040)
-    w6.attached = True
-    spy6 = OpacitySpy()
-    w6.setWindowOpacity = spy6
-    w6._sync_native_icons = lambda: None   # offscreen 下不动原生图标
+    w4._sync_native_icons = lambda: None   # offscreen 下不动原生图标
     old_attach = dw.attach_to_desktop
     old_enforce = dw.win32_layer.enforce_band_order
     dw.attach_to_desktop = lambda *a, **k: True
     dw.win32_layer.enforce_band_order = lambda: None
     try:
-        w6.show_desktop()
+        w4.show_desktop()
     finally:
         dw.attach_to_desktop = old_attach
         dw.win32_layer.enforce_band_order = old_enforce
-    check("O6 挂载态再现恒 1.0（决策点 2：挂载必须不透明）",
-          bool(spy6.calls) and spy6.calls[-1] == 1.0, "calls=%s" % spy6.calls)
+    check("O4 挂载态再现恒 1.0",
+          bool(spy4.calls) and spy4.calls[-1] == 1.0, "calls=%s" % spy4.calls)
 
     print()
     if failures:

@@ -155,7 +155,7 @@ def main(app):
 
     # ---------- U5 旧控件兼容 ----------
     need = ["chk_autostart", "cmb_tier", "sld_icon_fit", "chk_auto_cols",
-            "spin_cols", "sld_opacity", "chk_autoclone",
+            "spin_cols", "chk_autoclone",
             "chk_widgets", "chk_tray", "chk_dev", "btn_rescan", "btn_reset",
             "btn_close", "cmb_layout_mode", "chk_autosync",
             "cmb_page_axis", "chk_auto_arrange", "chk_match_native"]
@@ -163,8 +163,7 @@ def main(app):
     check("U5 旧控件属性名全部保留", not missing, "missing=%s" % missing)
     check("U5 控件类型未被改坏",
           isinstance(dlg.chk_dev, QCheckBox) and isinstance(dlg.cmb_tier, QComboBox)
-          and isinstance(dlg.sld_icon_fit, QSlider)
-          and isinstance(dlg.sld_opacity, QSlider))
+          and isinstance(dlg.sld_icon_fit, QSlider))
     # v7 B2（反馈 9）：无界像素 spin 退役——尺寸单源后它只会造成
     # "切模式图标突变"，留着就是第二个真相源
     check("U5b 无界像素 spin 已退役", not hasattr(dlg, "spin_icon_px"))
@@ -179,20 +178,10 @@ def main(app):
     check("U6 自动同步在「模式」页", id(dlg.chk_autosync) in inside)
     check("U6 布局模式下拉在「模式」页", id(dlg.cmb_layout_mode) in inside)
 
-    # ---------- U8 v10 A8（反馈 14）：悬浮不透明度在挂载态不适用 ----------
-    # 根因：整理层挂载后是分层窗口，`setWindowOpacity` 对内容无效，
-    # `_show_current_mode()` 在挂载分支还一律置 1.0——用户怎么拖都没反应。
-    # 修法：挂载态把滑条置灰 + hint 说明，不再让用户拖一个无效的滑条。
-    check("U8a 挂载态下滑条置灰", not dlg.sld_opacity.isEnabled())
-    fw.attached = False
-    dlg2 = SettingsDialog(fw, st, None)
-    check("U8b 悬浮态下滑条可用", dlg2.sld_opacity.isEnabled())
-    dlg2.sld_opacity.setValue(72)
-    app.processEvents()
-    check("U8c 拖动后 setting 落 0.72",
-          abs(st.get_setting("opacity") - 0.72) < 1e-9,
-          "%s" % st.get_setting("opacity"))
-    fw.attached = True
+    # ---------- U8 v14i：悬浮不透明度滑条退役（兜底固定 0.95） ----------
+    # 悬浮形态只是挂载失败的兜底，正常机器见不到；固定值见
+    # desktop_window.FLOATING_OPACITY（判据在 test_opacity_setting.py）。
+    check("U8 悬浮不透明度滑条已退役", not hasattr(dlg, "sld_opacity"))
 
     # ---------- U7 布局模式下拉 ----------
     check("U7 下拉初值 = storage 的 grid",

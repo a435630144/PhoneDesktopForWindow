@@ -146,7 +146,9 @@ DEFAULT_SETTINGS = {
     "columns": "auto",         # 每行图标数："auto"=按工作区尺寸自动计算（M1 GridMetrics，
                                # 指导文档 §1：四边等距铺满）；或整数（>=2）手动覆盖列数
                                # （设置高级选项，rows 始终自动）
-    "opacity": 0.95,           # 整理窗口不透明度 0.5 ~ 1.0
+                               # （v14i：`opacity` 键退役——悬浮兜底窗改用固定值，
+                               #   见 desktop_window.FLOATING_OPACITY；老 state.json 里的
+                               #   残留键无人读取，无害）
     "show_widgets": True,      # 是否显示桌面小组件
     # v10 A9（反馈 9）：天气**全局唯一**配置——「天气」组件与面板里的
     # 天气卡共用一份城市 / 联网开关（旧版各存各的，于是两个界面两个温度）。

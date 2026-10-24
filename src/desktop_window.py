@@ -30,6 +30,10 @@ from .win32_layer import attach_to_desktop
 # 420ms 是"能看清内容在移动"的下限（400ms 以下会被感知成瞬切）。
 FLIP_MS = 420
 
+# 悬浮兜底窗（挂载失败时）的固定不透明度——v14i 起 `opacity` 用户设置
+# 退役，兜底形态不值得一个"挂载态永远无效"的滑条（原默认就是 0.95）
+FLOATING_OPACITY = 0.95
+
 WM_NCHITTEST = 0x84
 HTTRANSPARENT, HTCLIENT = -1, 1
 
@@ -298,14 +302,19 @@ class DesktopWindow(QWidget):
             self._enter_floating_mode()
 
     def _enter_floating_mode(self):
-        """悬浮模式兜底（挂载失败时）：置顶 + 带面板背景。"""
+        """悬浮模式兜底（挂载失败时）：置顶 + 带面板背景。
+
+        v14i：不透明度固定 FLOATING_OPACITY（原 `opacity` 用户设置退役——
+        悬浮形态只是挂载失败的兜底，正常机器永远见不到，为它留一个
+        "挂载态永远无效"的滑条只会造成困惑）。
+        """
         screen = QApplication.primaryScreen().availableGeometry()
         if not self._floating_flag_set:
             self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
             self._floating_flag_set = True
         self.setGeometry(QRect(screen.left() + 60, screen.top() + 40,
                                min(screen.width(), 1180), min(screen.height(), 780)))
-        self.setWindowOpacity(float(self.storage.get_setting("opacity")))
+        self.setWindowOpacity(FLOATING_OPACITY)
         self.show()
         self._update_grid_metrics()
         self.visibilityChanged.emit(True)

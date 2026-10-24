@@ -2103,38 +2103,9 @@ class SettingsDialog(QDialog):
         c.addWidget(self.lbl_interaction)
         lay.addWidget(card)
 
-        # ---- v14h：悬浮模式不透明度（自原「外观」页迁入——悬浮是交互
-        # 模式的一部分，放这里才对题） ----
-        card, c = self._card(body, i18n.T("settings.appearance.card.look"))
-        self.sld_opacity = QSlider(Qt.Horizontal)
-        self.sld_opacity.setRange(50, 100)
-        self.sld_opacity.setFixedWidth(190)
-        self.sld_opacity.setValue(int(float(self.storage.get_setting("opacity")) * 100))
-        self.lbl_opacity = QLabel("%d%%" % self.sld_opacity.value())
-        self.lbl_opacity.setObjectName("rowHint")
-        self.lbl_opacity.setFixedWidth(46)
-        self.sld_opacity.valueChanged.connect(self._apply_opacity)
-        # v10 A8（反馈 14）：**挂载桌面层时这个设置不生效**——整理层是分层
-        # 窗口，`setWindowOpacity` 对内容无效（`_show_current_mode()` 在挂载
-        # 分支一律置 1.0），且分层窗的全局 alpha 会连带命中测试一起变
-        # （透明区穿透的教训）。所以挂载态直接把滑条置灰并说明原因，
-        # 不再让用户拖一个看不出变化的滑条。
-        self._opacity_attached = bool(getattr(self.window, "attached", False))
-        self.sld_opacity.setEnabled(not self._opacity_attached)
-        op_box = QWidget()
-        ob = QHBoxLayout(op_box)
-        ob.setContentsMargins(0, 0, 0, 0)
-        ob.setSpacing(8)
-        ob.addWidget(self.sld_opacity)
-        ob.addWidget(self.lbl_opacity)
-        # v10 A4（反馈 10 规则 3）：标签已写「悬浮模式」，hint 不再复读
-        # 「当前为悬浮模式」；只留挂载态这一条真正新增的信息。
-        self._row(c, card, i18n.T("settings.appearance.opacity.title"),
-                  op_box,
-                  i18n.T("settings.appearance.opacity.hint_attached")
-                  if self._opacity_attached else
-                  i18n.T("settings.appearance.opacity.hint_free"))
-        lay.addWidget(card)
+        # v14i：「悬浮模式不透明度」滑条退役——悬浮形态只是挂载失败的
+        # 兜底（用户几乎永远见不到），为它留一个"挂载态永远无效"的设置
+        # 只会造成困惑。兜底窗改用固定值 desktop_window.FLOATING_OPACITY。
 
         card, c = self._card(body, i18n.T("settings.mode.card.takeover"))
         # 反馈 16：**启动即接管**——「接管系统桌面」开关冗余，已删除。
@@ -2776,16 +2747,6 @@ class SettingsDialog(QDialog):
         for sw in getattr(self, "_dev_switches", {}).values():
             sw.setEnabled(on)
         self._sync_origin_controls()
-
-    def _apply_opacity(self, value):
-        self.lbl_opacity.setText("%d%%" % value)
-        self.storage.set_setting("opacity", value / 100.0)
-        # v10 A8（反馈 14）：挂载态下半透明对分层窗口无效，还会连带命中测试
-        # 一起变（透明区穿透的教训）——保持 1.0，滑条本就在挂载态被置灰。
-        if getattr(self.window, "attached", False):
-            self.window.setWindowOpacity(1.0)
-        else:
-            self.window.setWindowOpacity(value / 100.0)
 
     def _apply_widgets(self, checked):
         on = bool(checked)
