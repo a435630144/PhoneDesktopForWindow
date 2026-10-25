@@ -16,7 +16,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt  # noqa: E402
+from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter, QLinearGradient  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
@@ -769,6 +769,55 @@ def main(app):
           str(got_frame))
     menu.close()
     pop_c.close()
+
+
+    # ---------- TM v14u：自动展开/关闭时长可调 ----------
+    stt = _st("tm.json")
+    check("TM 默认 260 / 450",
+          stt.get_setting("folder_hover_open_ms") == 260
+          and stt.get_setting("folder_auto_close_ms") == 450)
+    stt.set_setting("folder_hover_open_ms", 600)
+    stt.set_setting("folder_auto_close_ms", 900)
+    icon_t = AppIcon({"id": "tmf", "type": "folder", "name": "T",
+                      "app": {"name": "T", "target": "T", "kind": "app"},
+                      "col": 0, "row": 0, "page": 0}, 64)
+    # 桌面图标（非弹窗成员）才有 storage 链——给个宿主
+    class _HostT(QWidget):
+        pass
+    host_t = _HostT()
+    host_t.storage = stt
+    icon_t.setParent(host_t)
+    check("TMb 图标读取展开驻留 600ms",
+          icon_t._hover_open_ms() == 600, str(icon_t._hover_open_ms()))
+    icon_t.deleteLater()
+
+    # 弹窗：拍数 = 时长 / 225（900 -> 4 拍）
+    stt2 = _st("tm2.json")
+    stt2.set_setting("folder_auto_close_ms", 900)
+    stt2._data["layout"] = [
+        {"id": "tf", "type": "folder", "col": 0, "row": 0, "name": "TF",
+         "app": {"name": "TF", "target": "TF", "kind": "app"},
+         "apps": [{"id": "m", "name": "m", "target": "m", "kind": "app"}]},
+    ]
+    stt2.save()
+    pop_t = fp.FolderPopup(stt2, stt2.find_entry("tf"), anchor_rect=None)
+    pop_t.set_opened_by_hover(True)
+    check("TMc 900ms -> 4 拍", pop_t._auto_close_miss_n == 4,
+          str(pop_t._auto_close_miss_n))
+    # 设置页滑条写键
+    from src.settings_dialog import SettingsDialog as _SD5
+    st_d3 = _st("tm3.json")
+    dlg_t = _SD5(type("W5", (), {"attached": False})(), st_d3, None)
+    check("TMd 文件夹页有两滑条",
+          hasattr(dlg_t, "sld_folder_open")
+          and hasattr(dlg_t, "sld_folder_close"))
+    dlg_t.sld_folder_open.setValue(700)
+    dlg_t.sld_folder_close.setValue(1200)
+    check("TMe 滑条写键",
+          st_d3.get_setting("folder_hover_open_ms") == 700
+          and st_d3.get_setting("folder_auto_close_ms") == 1200)
+    dlg_t.deleteLater()
+    pop_t.close()
 
     print()
     if failures:

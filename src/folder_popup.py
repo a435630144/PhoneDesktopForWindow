@@ -905,6 +905,14 @@ class FolderPopup(QWidget):
         self._opened_by_hover = bool(on)
         self._auto_close_miss = 0
         if self._opened_by_hover:
+            # v14u：自动关闭时长可调（拍数 = 时长 / 拍长，最少 1 拍）
+            try:
+                total = int(self.storage.get_setting("folder_auto_close_ms"))
+            except Exception:    # noqa: BLE001
+                total = AUTO_CLOSE_TICK_MS * AUTO_CLOSE_MISS
+            total = max(AUTO_CLOSE_TICK_MS, min(3000, total))
+            self._auto_close_miss_n = max(
+                1, int(round(total / AUTO_CLOSE_TICK_MS)))
             self._auto_close.start()
         else:
             self._auto_close.stop()
@@ -950,7 +958,8 @@ class FolderPopup(QWidget):
             self._auto_close_miss = 0
             return
         self._auto_close_miss += 1
-        if self._auto_close_miss >= AUTO_CLOSE_MISS:
+        if self._auto_close_miss >= getattr(self, "_auto_close_miss_n",
+                                            AUTO_CLOSE_MISS):
             self._auto_close.stop()
             self.close()
 

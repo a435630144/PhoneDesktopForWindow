@@ -1668,6 +1668,7 @@ class AppIcon(QWidget):
                           cfg.anim_ms, effects.spring_curve(1.0, cfg.anim_ms))
         # v14 反馈 1：文件夹悬停自动展开（手机文件夹的"瞄一眼"语义）
         if self._hover_expand_ok():
+            self._hover_open.setInterval(self._hover_open_ms())
             self._hover_open.start()
         self.update()
 
@@ -1678,6 +1679,14 @@ class AppIcon(QWidget):
         self._animate(b"hover_scale", self._hover_scale, 1.0,
                       max(80, cfg.anim_ms), effects.spring_curve(1.0, 160))
         self.update()
+
+    def _hover_open_ms(self) -> int:
+        """悬停自动展开驻留（v14u：设置可调，默认 260ms）。"""
+        try:
+            v = int(self._storage().get_setting("folder_hover_open_ms"))
+        except Exception:        # noqa: BLE001
+            return 260
+        return max(80, min(1500, v))
 
     def _hover_expand_ok(self) -> bool:
         """文件夹悬停自动展开的放行判据（v14 反馈 1）。

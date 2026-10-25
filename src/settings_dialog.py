@@ -2322,6 +2322,47 @@ class SettingsDialog(QDialog):
         self._row(c, card, i18n.T("settings.layout.folder_hover.title"),
                   self.chk_hover_folder,
                   i18n.T("settings.layout.folder_hover.hint"))
+
+        # v14u：自动展开 / 自动关闭时长
+        self.sld_folder_open = QSlider(Qt.Horizontal)
+        self.sld_folder_open.setRange(100, 1000)
+        self.sld_folder_open.setFixedWidth(150)
+        self.sld_folder_open.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_folder_open.setValue(int(
+            self.storage.get_setting("folder_hover_open_ms") or 260))
+        self.lbl_folder_open = QLabel("%dms" % self.sld_folder_open.value())
+        self.lbl_folder_open.setObjectName("rowHint")
+        self.lbl_folder_open.setFixedWidth(52)
+        self.sld_folder_open.valueChanged.connect(self._apply_folder_open)
+        self.sld_folder_open.sliderReleased.connect(self._flush_storage)
+        fbox = QWidget()
+        fl = QHBoxLayout(fbox)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.setSpacing(8)
+        fl.addWidget(self.sld_folder_open)
+        fl.addWidget(self.lbl_folder_open)
+        self._row(c, card, i18n.T("settings.folders.open_ms.title"),
+                  fbox, i18n.T("settings.folders.open_ms.hint"))
+
+        self.sld_folder_close = QSlider(Qt.Horizontal)
+        self.sld_folder_close.setRange(200, 2000)
+        self.sld_folder_close.setFixedWidth(150)
+        self.sld_folder_close.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_folder_close.setValue(int(
+            self.storage.get_setting("folder_auto_close_ms") or 450))
+        self.lbl_folder_close = QLabel("%dms" % self.sld_folder_close.value())
+        self.lbl_folder_close.setObjectName("rowHint")
+        self.lbl_folder_close.setFixedWidth(52)
+        self.sld_folder_close.valueChanged.connect(self._apply_folder_close)
+        self.sld_folder_close.sliderReleased.connect(self._flush_storage)
+        cbox = QWidget()
+        cl = QHBoxLayout(cbox)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(8)
+        cl.addWidget(self.sld_folder_close)
+        cl.addWidget(self.lbl_folder_close)
+        self._row(c, card, i18n.T("settings.folders.close_ms.title"),
+                  cbox, i18n.T("settings.folders.close_ms.hint"))
         lay.addWidget(card)
 
         # v14u：大文件夹改 per-folder（右键「放大/缩小」），全局开关退役；
@@ -3140,6 +3181,19 @@ class SettingsDialog(QDialog):
         """文件夹悬停自动展开（v14 反馈 1）：纯设置项，图标每次悬停现读。"""
         self.storage.set_setting("folder_hover_expand", bool(checked))
         self._flush_storage()
+
+    def _apply_folder_open(self, v):
+        """悬停自动展开驻留（v14u）：下次悬停即生效。"""
+        self.lbl_folder_open.setText("%dms" % v)
+        self.storage.set_setting("folder_hover_open_ms", int(v))
+
+    def _apply_folder_close(self, v):
+        """悬停展开后自动关闭时长（v14u）：对已开弹窗即时生效。"""
+        self.lbl_folder_close.setText("%dms" % v)
+        self.storage.set_setting("folder_auto_close_ms", int(v))
+        popup = getattr(self, "_popup", None)
+        if popup is not None and popup._opened_by_hover:
+            popup.set_opened_by_hover(True)
 
     def _rescan(self):
         added, removed = self.window.rescan_desktop()
