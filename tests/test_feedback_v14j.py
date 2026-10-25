@@ -17,6 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from src.storage import Storage   # noqa: E402
@@ -247,6 +248,55 @@ def main(app):
     app.processEvents()
     check("R1b 触发后发 openLocation", "reveal" in got, str(got))
     menu.close()
+
+
+    # ---------- W1-B12 编辑态仍画内容 / W2-B4 标签贴图按缩放烘焙 ----------
+    from src import widget_glass
+
+    class _Probe(widget_glass.GlassWidget):
+        def paint_content(self, p):
+            from PySide6.QtGui import QColor as _C
+            p.fillRect(self.card_rect(), _C(255, 0, 0, 255))
+            self.painted = True
+
+    probe = _Probe(_st("edit.json"), {"id": "e1", "kind": "probe",
+                                      "span": (2, 2), "settings": {}})
+    probe.resize(160, 140)
+    img = QImage(probe.width(), probe.height(), QImage.Format_ARGB32)
+    probe.render(img)
+    red_center = img.pixelColor(probe.width() // 2, probe.height() // 2).red()
+    check("W1 正常态画内容", red_center > 200, str(red_center))
+
+    probe._edit_mode = True
+    img2 = QImage(probe.width() + 40, probe.height() + 40,
+                  QImage.Format_ARGB32)
+    img2.fill(QColor(0, 0, 0))
+    probe.resize(img2.width(), img2.height())
+    probe.render(img2)
+    # 编辑态（窗口外扩）中心仍在 card_rect 内 -> 内容应有红色
+    c = img2.pixelColor(img2.width() // 2, img2.height() // 2)
+    check("W2 编辑态仍画内容（不再只剩空玻璃）",
+          c.red() > 200, "(%d,%d,%d)" % (c.red(), c.green(), c.blue()))
+    probe.close()
+
+    # 标签贴图：不同 scale 的 key 不同、贴图物理尺寸随 scale 变
+    from src.iconwidget import AppIcon
+    icon = AppIcon({"id": "lab", "name": "测试",
+                    "app": {"kind": "app", "name": "测试", "target": "T"},
+                    "col": 0, "row": 0, "page": 0}, 64)
+    icon.resize(96, 96)
+    items = icon._label_items()
+    check("W2b 有标签条目", bool(items))
+    o1, pm1 = icon._label_pixmap(items, 1.0)
+    k1 = icon._label_pm_cache[0]
+    o2, pm2 = icon._label_pixmap(items, 1.04)
+    k2 = icon._label_pm_cache[0]
+    check("W2c 缩放进缓存 key（1.0 vs 1.04 不同贴图）", k1 != k2)
+    check("W2d 贴图物理尺寸随缩放变大", pm2.width() > pm1.width(),
+          "%d -> %d" % (pm1.width(), pm2.width()))
+    o3, pm3 = icon._label_pixmap(items, 1.041)   # 量化步进内复用
+    check("W2e 量化步进内命中缓存（1.04 vs 1.041 同 key）",
+          icon._label_pm_cache[0] == k2)
 
     print()
     if failures:

@@ -532,8 +532,9 @@ class AppIcon(QWidget):
 
         self._paint_icon_only(p, dpr)
         if not self._no_label:
-            # 缩放动画中（s 偏离 1）走 pixmap 贴图，消除文字逐帧重排抽动
-            self._paint_label(p, scaled=abs(s - 1.0) > 0.002)
+            # 缩放动画中（s 偏离 1）走 pixmap 贴图，消除文字逐帧重排抽动；
+            # v14j：贴图按当前帧缩放烘焙（1:1 贴，不重采样发糊）
+            self._paint_label(p, scaled=abs(s - 1.0) > 0.002, scale=s)
         # 多选态标记画在最上层：压在图标左上角（不参与缩放，避免跟着
         # 悬停/按压一起抖）
         self._paint_select_badge(p)
@@ -626,7 +627,8 @@ class AppIcon(QWidget):
                                                cs, cs), dpr)
         p.restore()
 
-    def _paint_label(self, p: QPainter, scaled: bool = False):
+    def _paint_label(self, p: QPainter, scaled: bool = False,
+                     scale: float = 1.0):
         """画标签。scaled=True 时走 pixmap 缓存贴图。
 
         悬停/按压/错峰淡入动画期间 painter 带非整数缩放变换，逐帧直接
@@ -634,6 +636,10 @@ class AppIcon(QWidget):
         （用户反馈"放大时字体抽一下"）。动画帧改为把整层标签（含阴影
         描边）渲染进一张透明 pixmap 一次，再随变换平滑缩放地贴上去。
         静止态（s≈1）仍直接画文字，保持像素级清晰。
+
+        v14j：贴图按当前帧缩放 `scale` 烘焙（见 _label_pixmap），贴图与
+        矩阵 1:1，动画帧不再是"放大后的软图"——阴影与文字同层同缩放，
+        发糊与错位一起消失。
         """
         items = self._label_items()
         if not items:
@@ -643,7 +649,7 @@ class AppIcon(QWidget):
                 _ls.draw_label_text(p, rect, flags, line,
                                     self._label_style, self._label_font_px)
             return
-        origin, pm = self._label_pixmap(items)
+        origin, pm = self._label_pixmap(items, scale)
         p.save()
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         p.drawPixmap(origin, pm)
@@ -695,15 +701,24 @@ class AppIcon(QWidget):
                        rect.width(), lh), Qt.AlignCenter, line)
                 for i, line in enumerate(lines) if line]
 
-    def _label_pixmap(self, items):
-        """把标签整层渲染成透明 pixmap（按内容键缓存，动画帧复用）。"""
+    def _label_pixmap(self, items, scale: float = 1.0):
+        """把标签整层渲染成透明 pixmap（按内容键缓存，动画帧复用）。
+
+        v14j 反馈：动画帧贴图按 1.0 倍烘焙再被矩阵放大（最高 1.04~1.08），
+        双线性重采样把 1px 阴影一起软化——"文字动阴影没动/发糊"。现在
+        按**当前帧缩放** `scale` 烘焙（字号×scale、dpr×scale），贴图与
+        矩阵 1:1，放大帧同样是原生锐度；缓存 key 量化到 0.02 步进，一次
+        hover 动画只烘 2~3 张（上升沿/下降沿），不会逐帧重排。
+        """
         st = self._label_style
+        # 量化：0.02 步进（视觉上无法分辨的缩放差共用一张贴图）
+        q = max(0.02, round(max(0.2, scale) / 0.02) * 0.02)
         key = (tuple((r.x(), r.y(), r.width(), r.height(), f, l)
                      for r, f, l in items),
                st.color.rgba(), st.bold, st.shadow, st.shadow_color.rgba(),
                round(st.shadow_alpha, 3), st.outline,
                st.outline_color.rgba(), st.outline_width,
-               self._label_font_px)
+               self._label_font_px, q)
         cached = getattr(self, "_label_pm_cache", None)
         if cached is not None and cached[0] == key:
             return cached[1], cached[2]
@@ -712,9 +727,9 @@ class AppIcon(QWidget):
             bound = bound.united(r)
         # 阴影/描边最大越界 = 描边 3px + 阴影偏移 1px，四周留 4px 防裁
         margin = 4
-        dpr = self.devicePixelRatioF()
-        pm = QPixmap(int((bound.width() + margin * 2) * dpr),
-                     int((bound.height() + margin * 2) * dpr))
+        dpr = self.devicePixelRatioF() * q
+        pm = QPixmap(max(1, int((bound.width() + margin * 2) * dpr)),
+                     max(1, int((bound.height() + margin * 2) * dpr)))
         pm.setDevicePixelRatio(dpr)
         pm.fill(Qt.transparent)
         pp = QPainter(pm)
@@ -724,7 +739,7 @@ class AppIcon(QWidget):
             rr = QRect(r.x() - bound.x() + margin, r.y() - bound.y() + margin,
                        r.width(), r.height())
             _ls.draw_label_text(pp, rr, flags, line,
-                                self._label_style, self._label_font_px)
+                                self._label_style, self._label_font_px * q)
         pp.end()
         origin = QPoint(bound.x() - margin, bound.y() - margin)
         self._label_pm_cache = (key, origin, pm)

@@ -737,6 +737,12 @@ class FloatingWidget(QWidget):
                 for key in ("nw", "n", "ne", "w", "e", "sw", "s", "se"):
                     cx, cy = self._handle_center(key)
                     p.drawEllipse(QPointF(cx, cy), s / 2 - 0.5, s / 2 - 0.5)
+                # v14j 反馈 12：编辑框画完**继续画内容**——提前 return 让
+                # 所有自绘组件（时钟/天气/音乐/日历/监控…）在编辑尺寸时
+                # 只剩一块空玻璃（2026-10-25 用户实测），对着空卡拖八点
+                # 根本无从判断"调大调小内容会怎么排"。内容先画、虚线后画
+                # （虚线在上，边界仍清晰）。
+                self.paint_content(p)
                 return
             # 内容：自绘组件的唯一入口（v8 C2）。不覆盖它 = 无内容（老组件用
             # 子控件排版：clock 的 QLabel、notes 的 QTextEdit，走各自 paintEvent）。
