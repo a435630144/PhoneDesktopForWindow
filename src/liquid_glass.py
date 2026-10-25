@@ -651,29 +651,6 @@ def border_color() -> QColor:
 # ---------------------------------------------------------------- 实时折射
 
 
-def _crop_like(sat_img, wall, outer):
-    """从饱和整图按 wallpaper 的几何裁出 outer 对应块（v14j）。"""
-    from PySide6.QtCore import QRect as _QR
-    img = sat_img
-    base = wall.rect
-    dpr = wall.dpr
-    w = max(1, int(round(outer.width() * dpr)))
-    h = max(1, int(round(outer.height() * dpr)))
-    x = int(round((outer.x() - base.x()) * dpr))
-    y = int(round((outer.y() - base.y()) * dpr))
-    out = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
-    out.fill(Qt.transparent)
-    sx = max(0, x)
-    sy = max(0, y)
-    ex = min(img.width(), x + w)
-    ey = min(img.height(), y + h)
-    if ex > sx and ey > sy:
-        p = QPainter(out)
-        p.drawImage(sx - x, sy - y, img, sx, sy, ex - sx, ey - sy)
-        p.end()
-    return out
-
-
 def lens_margin(lens: Lens) -> float:
     """折射要采到表面外面多少（逻辑 DIP）：带宽 + 最大位移 + 余量。"""
     if lens is None:
@@ -756,21 +733,17 @@ class LiveLens:
             except Exception:        # noqa: BLE001
                 wall = None
             if wall is not None:
-                # v14j：饱和度上移到快照层整块烘焙（拖动重算只剩 C++ 裁剪
-                # + 条带位移，PIL 往返不再逐次发生）；磨砂混合同理。
-                sharp = wall.crop(outer)
+                # v14n：饱和度在快照层**成对**烘焙（image+soft 都烘——v14j
+                # 只烘清晰图，frost=100% 默认档下 _blend_frost 直返未饱和
+                # soft，饱和度静默失效，2026-10-26 自审实测抓到）。裁剪全
+                # 部走饱和快照，拖动重算只剩 C++ copy + 条带位移。
+                sat_wall = wallpaper.saturated(wall, float(lens.saturation))
+                sharp = sat_wall.crop(outer)
                 if not sharp.isNull():
                     k = sharp.width() / max(1.0, float(outer.width()))
-                    soft = wall.soft_crop(outer, (sharp.width(), sharp.height()))
+                    soft = sat_wall.soft_crop(outer, (sharp.width(),
+                                                      sharp.height()))
                     base = _blend_frost(sharp, soft, float(lens.frost))
-                    sat_wall = wallpaper.with_saturation(
-                        wall.image, float(lens.saturation))
-                    if sat_wall is not wall.image:
-                        # 饱和版整图裁一块（与 sharp 同几何），替换 base
-                        sat_img = _crop_like(sat_wall, wall, outer)
-                        if not sat_img.isNull():
-                            base = _blend_frost(
-                                sat_img, soft, float(lens.frost))
                     self._pm = refract(sharp, radius, lens, k, base=base,
                                        margin=m, pre_saturated=True)
                     return self._pm

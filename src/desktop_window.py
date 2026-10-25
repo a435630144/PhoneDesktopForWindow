@@ -3297,10 +3297,8 @@ class DesktopWindow(QWidget):
         # 同语义）。点击（无拖动）→ folderClicked → open_folder 的 toggle
         # 语义关闭弹窗，与旧行为一致。
         if icon is not None:
-            anchor_g = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
-            anchor_local = anchor_g.translated(-scrim.geometry().topLeft())
-            scrim.setMask(QRegion(scrim.geometry()).subtracted(
-                QRegion(anchor_local)))
+            scrim.setMask(self._scrim_mask_without_anchor(
+                scrim, icon.mapToGlobal(QPoint(0, 0)), icon.size()))
         # 2026-10-19 反馈：幕布铺满桌面带且层级最高，拖放必须由它转发到
         # 桌面窗口——否则"从文件夹里把图标拖出来"的 drop 会被幕布吞掉
         scrim.dropReceived.connect(self._drop_from_scrim)
@@ -3384,10 +3382,13 @@ class DesktopWindow(QWidget):
         窗口——动画中途夭折、_really_close 不执行、unregister 残留。
         挂到 destroyed 信号再放手。
         """
+        if w is None:                 # closed 信号双发时弹窗已是 None
+            return
         keep = getattr(self, "_closing_band_widgets", None)
         if keep is None:
             keep = self._closing_band_widgets = []
-        keep.append(w)
+        if not any(x is w for x in keep):    # 去重（两条关闭路径会重复保）
+            keep.append(w)
         try:
             w.destroyed.connect(
                 lambda *_, p=w: self._discard_closing_widget(p))
@@ -3398,6 +3399,20 @@ class DesktopWindow(QWidget):
         keep = getattr(self, "_closing_band_widgets", None)
         if keep:
             self._closing_band_widgets = [x for x in keep if x is not w]
+
+    @staticmethod
+    def _scrim_mask_without_anchor(scrim, anchor_global: QPoint,
+                                   anchor_size) -> "QRegion":
+        """幕布掩膜 = 全窗减锚点瓷砖（v14n 修坐标系）。
+
+        setMask 的 QRegion 是**窗口本地坐标**——旧实现用 scrim.geometry()
+        （全局）当底，主屏恰在 (0,0) 时碰巧等价，副屏/负坐标屏会整体错位
+        （掩膜全空或挖错位置）。底改本地 (0,0,w,h)，锚点换算到本地。
+        """
+        full_local = QRect(0, 0, scrim.width(), scrim.height())
+        anchor_local = QRect(anchor_global, anchor_size).translated(
+            -scrim.geometry().topLeft())
+        return QRegion(full_local).subtracted(QRegion(anchor_local))
 
     def _on_anchor_drag_started(self, icon):
         """弹窗锚点瓷砖开始拖动（v14k3）：收起弹窗。

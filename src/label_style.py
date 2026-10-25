@@ -101,6 +101,7 @@ class HoverStyle(NamedTuple):
     enabled: bool = True         # False = hover 不画高亮底/边
     scale_pct: int = 104         # hover 放大幅度 %（100 = 不放大）
     anim_ms: int = 140           # hover 动画时长 ms（80~400）
+    color_custom: bool = False   # True = 用户自定义过描边色（v14n）
 
 
 # ---------------------------------------------------------------- 读取助手
@@ -225,6 +226,7 @@ def hover_style(storage) -> HoverStyle:
     raw = str(storage.get_setting("icon_hover_color") or "").strip()
     return HoverStyle(
         color=_color(raw, QColor(255, 255, 255, 36).name()),
+        color_custom=bool(raw),
         fill_alpha=_int(storage, "icon_hover_fill", 8, 0, 40) / 100.0,
         enabled=_flag(storage, "icon_hover_enabled", True),
         scale_pct=_int(storage, "icon_hover_scale", DEFAULT_HOVER_SCALE,

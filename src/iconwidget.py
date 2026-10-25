@@ -112,11 +112,19 @@ def _is_tooltip_window(w) -> bool:
     """
     if w is None:
         return False
+    # 2026-10-26 崩溃修复（用户 crash.log 33 次）：SettingsDialog 等部件
+    # 持有 `self.window = <DesktopWindow>` 属性，**遮蔽**了 QWidget.window()
+    # 方法——拖拽命中测试经过设置窗时 `w.window()` 调到 DesktopWindow
+    # 实例（not callable）直接崩。改走 parentWidget() 链找顶层（该链上的
+    # 方法没有被遮蔽），并保持 RuntimeError 防御。
     try:
-        win = w.window()
-        if win is None:
-            return False
-        return win.windowType() == Qt.ToolTip
+        win = w
+        while True:
+            p = win.parentWidget()
+            if p is None:
+                break
+            win = p
+        return win is not None and win.windowType() == Qt.ToolTip
     except RuntimeError:
         return False
 
@@ -533,10 +541,8 @@ class AppIcon(QWidget):
             if cfg.enabled:
                 fill = QColor(255, 255, 255, max(0, min(255,
                         int(round(cfg.fill_alpha * 255)))))
-                border = QColor(cfg.color)
-                if not str(self._storage() and self._storage().get_setting(
-                        "icon_hover_color") or "").strip():
-                    border = theme.HOVER_BORDER   # 未自定义 -> 跟内置白
+                # v14n：color_custom 进样式（原来每帧读两次 storage）
+                border = QColor(cfg.color) if cfg.color_custom                     else theme.HOVER_BORDER
                 p.setPen(QPen(border, 1))
                 p.setBrush(fill)
                 p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2),
@@ -1786,9 +1792,21 @@ class AppIcon(QWidget):
             # ① zip：自带「全部解压缩」（保证可用，插在最前）
             if ext in shell_verbs.COMPRESSED_EXTS:
                 dest_dir = os.path.dirname(target)
-                act = menu.addAction("全部解压缩", lambda: (
-                    shell_verbs.extract_here(target, dest_dir),
-                    shell_verbs.notify_extract(dest_dir)))
+
+                def _do_extract(t=target, d=dest_dir):
+                    base = os.listdir(d) if os.path.isdir(d) else []
+                    ok = shell_verbs.extract_here(t, d)
+                    if ok:
+                        # 非阻塞盯完成（v14n：原来 UI 线程轮询最长 30s，
+                        # 大压缩包会把整个界面冻住）
+                        shell_verbs.watch_extract(
+                            d, base,
+                            lambda done: shell_verbs.notify_extract(
+                                d if done else t))
+                    else:
+                        shell_verbs.notify_extract(t)
+
+                menu.addAction("全部解压缩", _do_extract)
                 added = True
             # ② 原生菜单镜像（COM）
             nodes, invoker = shell_verbs.native_menu(target)

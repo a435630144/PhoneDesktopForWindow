@@ -16,8 +16,8 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QPoint, QRect, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QImage  # noqa: E402
+from PySide6.QtCore import QPoint, QRect, QSize, Qt  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QPainter, QLinearGradient  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from src.storage import Storage   # noqa: E402
@@ -458,6 +458,123 @@ def main(app):
           str(bool(g2._event_hook)))
     g2.shutdown()
     check("K9e shutdown 撤钩", g2._event_hook is None)
+
+
+    # ---------- A1-A8 v14o 自审批次（2026-10-26） ----------
+    # A1 真崩溃①：部件 .window 属性遮蔽 QWidget.window()（crash.log 33 次）
+    class _ShadowWin(QWidget):
+        pass
+    sh_w = _ShadowWin()
+    sh_w.window = object()          # 模拟 SettingsDialog.self.window
+    from src.iconwidget import _is_tooltip_window
+    try:
+        r = _is_tooltip_window(sh_w)
+        check("A1 .window 属性遮蔽不崩（返回 False）", r is False, str(r))
+    except Exception as exc:        # noqa: BLE001
+        check("A1 .window 属性遮蔽不崩（返回 False）", False, repr(exc))
+
+    # A2 真崩溃②：clicked(bool) 塞进 revert_to（crash.log 取色崩溃）
+    from src import settings_dialog as _sd
+    from PySide6.QtWidgets import QColorDialog as _QCDW
+    st_a = _st("audit.json")
+    dlg_a = _sd.SettingsDialog(type("W", (), {"attached": False})(), st_a, None)
+    orig_cd = _sd.QColorDialog
+    # 无效色 = 用户取消：走 revert_to 分支（崩溃点就在那里）
+    _sd.QColorDialog = type("_FCancel", (), {
+        "getColor": staticmethod(lambda *a, **k: QColor()),
+        "DontUseNativeDialog": 0})
+    try:
+        dlg_a._pick_cell_preview_color(False)   # clicked(bool) 场景 + 取消
+        check("A2 clicked(bool) 进取色器不崩（取消路径）", True)
+        dlg_a._pick_cell_preview_color(
+            (dlg_a.cmb_cell_preview, 1))        # 元组路径仍工作
+        check("A2b 元组回退路径不崩", True)
+    except Exception as exc:        # noqa: BLE001
+        check("A2 clicked(bool) 进取色器不崩（取消路径）", False, repr(exc))
+    finally:
+        _sd.QColorDialog = orig_cd
+    dlg_a.deleteLater()
+
+    # A3 默认磨砂(100%)下饱和度仍生效（v14j 回归修复）
+    from src import liquid_glass as lg
+    from src import wallpaper as _wp
+    from src.wallpaper import Wallpaper as _WP
+    grad_img = QImage(200, 160, QImage.Format_ARGB32)
+    gp = QPainter(grad_img)
+    gg = QLinearGradient(0, 0, 200, 0)
+    gg.setColorAt(0, QColor(200, 40, 40))
+    gg.setColorAt(1, QColor(40, 40, 200))
+    gp.fillRect(grad_img.rect(), gg)
+    gp.end()
+    soft_img = grad_img.scaled(60, 48).scaled(200, 160)
+    fake = _WP(image=grad_img, soft=soft_img, rect=QRect(0, 0, 200, 160),
+               dpr=1.0, version=987654)
+    orig_snap = _wp.snapshot
+    _wp.snapshot = lambda refresh=False: fake
+    try:
+        ll1 = lg.LiveLens()
+        pm_a = ll1.pixmap(QRect(20, 20, 100, 80), 12,
+                          lg.Lens(0.6, 20.0, saturation=1.0, frost=1.0), 1.0)
+        ll2 = lg.LiveLens()
+        pm_b = ll2.pixmap(QRect(20, 20, 100, 80), 12,
+                          lg.Lens(0.6, 20.0, saturation=1.9, frost=1.0), 1.0)
+        ca = pm_a.toImage().pixelColor(50, 40)
+        cb = pm_b.toImage().pixelColor(50, 40)
+        check("A3 默认磨砂下饱和度生效（v14j 回归修复）",
+              abs(ca.red() - cb.red()) + abs(ca.blue() - cb.blue()) > 10,
+              "(%d,%d)->(%d,%d)" % (ca.red(), ca.blue(),
+                                    cb.red(), cb.blue()))
+        sw = _wp.saturated(fake, 1.9)
+        check("A3b 成对烘焙：soft 也变了",
+              sw.soft.pixelColor(100, 80) != fake.soft.pixelColor(100, 80))
+        check("A3c 中性 factor 返回原快照（零拷贝）",
+              _wp.saturated(fake, 1.0) is fake)
+    finally:
+        _wp.snapshot = orig_snap
+        _wp.invalidate()
+
+    # A4 幕布掩膜本地坐标（副屏/偏移屏）
+    from src.desktop_window import DesktopWindow as _DW
+    host4 = QWidget()
+    host4.setGeometry(100, 100, 400, 300)      # 非原点（模拟副屏偏移）
+    mk = _DW._scrim_mask_without_anchor(
+        host4, QPoint(150, 130), QSize(40, 40))
+    check("A4 掩膜底是本地坐标（含 (0,0) 与右下角）",
+          mk.contains(QPoint(2, 2)) and mk.contains(QPoint(395, 295)))
+    check("A4b 锚点被挖掉（本地 (50,50)=全局(150,130)）",
+          not mk.contains(QPoint(50, 50)))
+
+    # A5 hover 样式 color_custom 标志
+    st_h2 = _st("hover2.json")
+    hs0 = _lsm.hover_style(st_h2)
+    check("A5 默认非自定义", hs0.color_custom is False)
+    st_h2.set_setting("icon_hover_color", "#80FF0000")
+    check("A5b 设色后自定义", _lsm.hover_style(st_h2).color_custom is True)
+
+    # A6 事件钩子限流
+    g3 = _bg.BandGuard(None)
+    g3._timer.stop()
+    hits = [0]
+    orig_c = g3._check
+    g3._check = lambda: (hits.append(1), orig_c())
+    g3._on_win_event(None, 3, None, 0, 0, 0, 0)
+    n1 = len(hits)
+    g3._on_win_event(None, 3, None, 0, 0, 0, 0)   # 80ms 内 -> 被限流
+    check("A6 REORDER 连发限流", n1 >= 1 and len(hits) == n1,
+          "%d -> %d" % (n1, len(hits)))
+    g3._last_event_check = 0.0
+    g3._on_win_event(None, 3, None, 0, 0, 0, 0)
+    check("A6b 窗口外事件照常处理", len(hits) == n1 + 1)
+
+    # A7 保活列表去重
+    win7 = DesktopWindow(_st("keep.json"))
+    tw = QWidget()
+    win7._keep_until_destroyed(tw)
+    win7._keep_until_destroyed(tw)
+    lst = getattr(win7, "_closing_band_widgets", [])
+    check("A7 重复保活只记一次", sum(1 for x in lst if x is tw) == 1)
+    win7._discard_closing_widget(tw)
+    win7.close()
 
     print()
     if failures:

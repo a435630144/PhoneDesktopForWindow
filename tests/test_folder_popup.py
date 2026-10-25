@@ -262,6 +262,11 @@ def main(app):
     w2.resize(scr_geo0.size())
     w2._update_grid_metrics()
     w2.attached = True          # 走桌面带分支（win32 层打桩，见下）
+    # v14o：隔离守护——offscreen 的 winId 是假句柄（IsWindow 恒 False），
+    # 轮询/事件钩子一跑就会把弹窗幕布"复活"重建，winId 漂移让 z-order
+    # 断言变成竞态。F10 只测挂载打桩本身。
+    w2._band_guard._timer.stop()
+    w2._band_guard.shutdown()
     # 打桩桌面带：fake_z 模拟 z-order（顶->底），9999 = 整理窗口。
     # attach_to_desktop 的真实语义是「插到 Progman 正上方」= 带内最底
     # （已有带成员之下）——打桩必须复刻这一点，否则测不出穿透。

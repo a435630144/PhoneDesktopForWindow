@@ -360,7 +360,6 @@ def extract_here(zip_path: str, dest_dir: str) -> bool:
     Shell 命名空间引擎。7z/rar 等只有原生镜像项（引擎不认）。
     """
     try:
-        import time as _time
         import win32com.client
         _com_init()
         sh = win32com.client.Dispatch("Shell.Application")
@@ -369,15 +368,36 @@ def extract_here(zip_path: str, dest_dir: str) -> bool:
         if src is None or dst is None:
             return False
         dst.CopyHere(src.Items(), 16)        # 16 = "Yes to all"
-        # CopyHere 是异步的：小包瞬间完成，大包由调用方轮询
-        deadline = _time.time() + 30
-        while _time.time() < deadline:
-            if list(os.listdir(dest_dir)):
-                return True
-            _time.sleep(0.2)
-        return True                          # 超时也返回 True（大包在后台解）
+        return True                          # CopyHere 异步，完成检测见 watch_extract
     except Exception:                        # noqa: BLE001
         return False
+
+
+def watch_extract(dest_dir: str, baseline: list, on_done, timeout_s: float = 60.0):
+    """非阻塞盯解压完成（v14n 修阻塞：原来在 UI 线程轮询最长 30s）。
+
+    QTimer 每 400ms 比一次目录内容（相对 baseline 出现新项 = 完成），
+    超时也回调（大包在后台继续解，提示语由调用方措辞）。
+    """
+    import time as _time
+    try:
+        from PySide6.QtCore import QTimer
+    except Exception:                       # noqa: BLE001 —— 无 Qt 就退化为直接回调
+        on_done(False)
+        return
+    state = {"start": _time.monotonic(), "base": set(baseline)}
+
+    def _tick():
+        try:
+            now = set(os.listdir(dest_dir))
+        except OSError:
+            now = set()
+        if (now - state["base"]) or _time.monotonic() - state["start"] > timeout_s:
+            on_done(bool(now - state["base"]))
+            return
+        QTimer.singleShot(400, _tick)
+
+    QTimer.singleShot(400, _tick)
 
 
 def notify_extract(dest_dir: str):

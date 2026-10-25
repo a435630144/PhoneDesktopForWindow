@@ -1962,6 +1962,12 @@ class SettingsDialog(QDialog):
         self._label_style_changed()
 
     def _pick_cell_preview_color(self, revert_to=None):
+        # 2026-10-26 崩溃修复（用户 crash.log）：本方法同时被
+        # btn_cell_preview_color.clicked 直连——clicked(checked: bool) 会把
+        # 布尔塞进 revert_to，取消取色时 `cmb, idx = revert_to` 解包崩溃。
+        # 只有「自定义预设」路径才传元组；其余一律视为无回退。
+        if not isinstance(revert_to, tuple):
+            revert_to = None
         raw = str(self._cell_preview_color or "").strip()
         start = QColor(raw) if raw else QColor(theme.DANGER)
         if not start.isValid():

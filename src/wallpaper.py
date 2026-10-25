@@ -81,40 +81,47 @@ class Wallpaper:
         return self.rect.contains(QRect(rect))
 
 
-def with_saturation(image: QImage, factor: float) -> QImage:
-    """整块壁纸的饱和度烘焙版（v14j，供液态玻璃底图用）。
-
-    玻璃饱和度原来是每次 LiveLens 重算时对**裁出来的那一小块**做 PIL
-    往返——组件拖动时每次移动都要重跑一次（PIL 往返 + 双倍拷贝），这是
-    "拖动一卡一卡"的主要剩余成本之一。上移到快照层：整块壁纸只有一张，
-    换壁纸/改饱和度才重烘一次，任何位置的表面裁剪都只是 C++ 的 copy。
-
-    结果按 (factor, version) 缓存在模块级；`factor` 中性（≈1.0）时直接
-    返回原图（零拷贝）。PIL 缺席/异常退回原图——效果可以缺，渲染不能崩。
-    """
-    if image is None or image.isNull():
+def _saturate_one(image: QImage, factor: float) -> QImage:
+    """单张图的饱和度烘焙（PIL，C 速度）。失败/中性返回原图。"""
+    if image is None or image.isNull() or abs(factor - 1.0) < 0.004:
         return image
-    if abs(factor - 1.0) < 0.004:
-        return image
-    key = (round(factor, 3), version())
-    hit = _SAT_CACHE.get("key")
-    if hit == key and _SAT_CACHE["img"] is not None:
-        return _SAT_CACHE["img"]
     try:
         from PIL import Image, ImageEnhance
-        w, h = image.width(), image.height()
-        raw = bytes(image.constBits()) if isinstance(
-            image.constBits(), memoryview) else bytes(image.constBits())
-        pil = Image.frombuffer("RGBA", (w, h), raw, "raw", "BGRA",
-                               0, image.bytesPerLine())
+        # 快照是 ARGB32_Premultiplied——PIL 的 Color 语义要求**直通 alpha**，
+        # 先转 ARGB32（不透明壁纸零成本，透明边只是多一次格式转换）
+        img = image.convertToFormat(QImage.Format_ARGB32)
+        w, h = img.width(), img.height()
+        raw = img.constBits()
+        data = raw.tobytes() if hasattr(raw, "tobytes") else bytes(raw)
+        pil = Image.frombuffer("RGBA", (w, h), data, "raw", "BGRA",
+                               0, img.bytesPerLine())
         pil = ImageEnhance.Color(pil).enhance(float(factor))
         out = pil.tobytes("raw", "BGRA")
         # QImage(data, ...) 不拷贝缓冲，Python 侧 out 会被回收——必须 copy()
-        sat = QImage(out, w, h, w * 4, QImage.Format_ARGB32).copy()
+        return QImage(out, w, h, w * 4, QImage.Format_ARGB32).copy()
     except Exception:            # noqa: BLE001 —— PIL 缺席就退回原图
         return image
+
+
+def saturated(wall: "Wallpaper", factor: float) -> "Wallpaper":
+    """整块壁纸的饱和度烘焙版（v14n 修订：image **与** soft 都烘）。
+
+    v14j 只烘了清晰图：frost=100%（默认）时 _blend_frost 直接返回未饱和
+    的 soft，饱和度静默失效（2026-10-26 自审实测抓到）。这里成对烘焙并
+    按 (version, factor) 模块级缓存——换壁纸/改滑条才重烘一次，任何
+    frost 档位下裁剪都只是 C++ copy。中性 factor 返回原快照（零拷贝）。
+    """
+    if wall is None or wall.image.isNull() or abs(factor - 1.0) < 0.004:
+        return wall
+    key = (wall.version, round(float(factor), 3))
+    if _SAT_CACHE["key"] == key and _SAT_CACHE["wall"] is not None:
+        return _SAT_CACHE["wall"]
+    sat = Wallpaper(image=_saturate_one(wall.image, factor),
+                    soft=_saturate_one(wall.soft, factor),
+                    rect=QRect(wall.rect), dpr=wall.dpr,
+                    version=wall.version)
     _SAT_CACHE["key"] = key
-    _SAT_CACHE["img"] = sat
+    _SAT_CACHE["wall"] = sat
     return sat
 
 
@@ -311,7 +318,7 @@ def _dpr() -> float:
 
 _CACHE = {"key": None, "wall": None, "t": 0.0}
 _KEYCACHE = {"key": None, "t": 0.0}
-_SAT_CACHE = {"key": None, "img": None}      # 饱和度烘焙版（v14j）
+_SAT_CACHE = {"key": None, "wall": None}    # 饱和度烘焙快照（v14n 成对）
 
 
 def _key() -> tuple:
@@ -365,4 +372,4 @@ def invalidate() -> None:
     """丢掉缓存（测试 / 手动换壁纸后强制重建）。"""
     _CACHE.update(key=None, wall=None, t=0.0)
     _KEYCACHE.update(key=None, t=0.0)
-    _SAT_CACHE.update(key=None, img=None)
+    _SAT_CACHE.update(key=None, wall=None)

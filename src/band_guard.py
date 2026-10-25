@@ -65,6 +65,7 @@ class BandGuard(QObject):
         # 与 z-order 重排，扰动瞬间立即 _check，盲窗缩到几十毫秒。
         self._event_hook = None
         self._reorder_hook = None
+        self._last_event_check = 0.0
 
     # ---------- 事件驱动钩子（v14n） ----------
     def install_event_hook(self):
@@ -111,6 +112,7 @@ class BandGuard(QObject):
             pass
         self._event_hook = None
         self._reorder_hook = None
+        self._last_event_check = 0.0
 
     def _on_win_event(self, hook, event, hwnd, id_object, id_child,
                       thread, time_ms):
@@ -121,6 +123,13 @@ class BandGuard(QObject):
         多跑几轮也只是一点冗余查询。唯一纪律：绝不抛（钩子里抛会砸掉
         系统事件派发）。
         """
+        # 限流：REORDER 事件一次窗口重排会连发十几个，80ms 内合并
+        # （漏掉的由 1.5s 轮询兜底，不会丢状态）
+        import time as _t
+        now = _t.monotonic()
+        if now - self._last_event_check < 0.08:
+            return
+        self._last_event_check = now
         try:
             self._check()
         except Exception:        # noqa: BLE001

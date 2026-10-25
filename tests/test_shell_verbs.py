@@ -90,9 +90,19 @@ def main(app):
         check("S6b 含系统动词（剪切/复制/属性）",
               any(strip(l) in ("剪切", "复制", "属性") for l in labels))
         check("S6c invoker 可调用", callable(invoker))
+    # v14n：extract_here 只发起（CopyHere 异步），完成检测交给 watch
+    ok = shell_verbs.extract_here(zpath, out_dir)
+    got = {"done": None}
+    shell_verbs.watch_extract(out_dir, [], lambda d: got.update(done=d),
+                              timeout_s=8.0)
+    deadline = __import__("time").time() + 10
+    while got["done"] is None and __import__("time").time() < deadline:
+        app.processEvents()
+        __import__("time").sleep(0.05)
     check("S7 extract_here 真解压",
-          shell_verbs.extract_here(zpath, out_dir)
-          and os.path.isfile(os.path.join(out_dir, "inner.txt")))
+          ok and got["done"] is True
+          and os.path.isfile(os.path.join(out_dir, "inner.txt")),
+          str(got))
     _sh.rmtree(out_dir, ignore_errors=True)
     os.makedirs(out_dir)
     # COM 失败路径：不存在文件回空
