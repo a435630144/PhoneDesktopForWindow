@@ -363,7 +363,8 @@ def _draw_rimlight(p: QPainter, surface: QRectF, radius_dev: float,
 
 def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
             frost: float = 3.0, base=None, margin: float = 0.0,
-            scrim: bool = True, hairline: bool = True) -> QPixmap:
+            scrim: bool = True, hairline: bool = True,
+            pre_saturated: bool = False) -> QPixmap:
     """把 `backdrop` 做成边缘折射贴图（输出只有表面本身那么大）。
 
     参数
@@ -442,8 +443,11 @@ def refract(backdrop, radius: float, lens: Lens, dpr: float = 1.0,
                         QImage.Format_ARGB32)
             except Exception:      # noqa: BLE001 —— 模糊失败就用清晰底图
                 base_img = src
-    # 饱和度：烘进 base_img，中部与边缘条带同源（与暗纱同一条纪律）
-    if lens is not None and abs(lens.saturation - 1.0) > 0.004:
+    # 饱和度：烘进 base_img，中部与边缘条带同源（与暗纱同一条纪律）。
+    # v14j：实时路径的饱和度已在快照层整图烘焙（pre_saturated=True 跳过
+    # 小图 PIL 往返）；抓屏兜底 / 老调用仍走这里的小图版本。
+    if (lens is not None and abs(lens.saturation - 1.0) > 0.004
+            and not pre_saturated):
         base_img = _saturate(base_img, lens.saturation)
 
     sw_i = max(1, int(round(sw)))
@@ -642,6 +646,29 @@ def border_color() -> QColor:
 # ---------------------------------------------------------------- 实时折射
 
 
+def _crop_like(sat_img, wall, outer):
+    """从饱和整图按 wallpaper 的几何裁出 outer 对应块（v14j）。"""
+    from PySide6.QtCore import QRect as _QR
+    img = sat_img
+    base = wall.rect
+    dpr = wall.dpr
+    w = max(1, int(round(outer.width() * dpr)))
+    h = max(1, int(round(outer.height() * dpr)))
+    x = int(round((outer.x() - base.x()) * dpr))
+    y = int(round((outer.y() - base.y()) * dpr))
+    out = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+    out.fill(Qt.transparent)
+    sx = max(0, x)
+    sy = max(0, y)
+    ex = min(img.width(), x + w)
+    ey = min(img.height(), y + h)
+    if ex > sx and ey > sy:
+        p = QPainter(out)
+        p.drawImage(sx - x, sy - y, img, sx, sy, ex - sx, ey - sy)
+        p.end()
+    return out
+
+
 def lens_margin(lens: Lens) -> float:
     """折射要采到表面外面多少（逻辑 DIP）：带宽 + 最大位移 + 余量。"""
     if lens is None:
@@ -724,14 +751,23 @@ class LiveLens:
             except Exception:        # noqa: BLE001
                 wall = None
             if wall is not None:
+                # v14j：饱和度上移到快照层整块烘焙（拖动重算只剩 C++ 裁剪
+                # + 条带位移，PIL 往返不再逐次发生）；磨砂混合同理。
                 sharp = wall.crop(outer)
                 if not sharp.isNull():
                     k = sharp.width() / max(1.0, float(outer.width()))
                     soft = wall.soft_crop(outer, (sharp.width(), sharp.height()))
-                    # 磨砂程度：清晰/磨砂按比例混合（1 = v14d 前的固定磨砂）
                     base = _blend_frost(sharp, soft, float(lens.frost))
+                    sat_wall = wallpaper.with_saturation(
+                        wall.image, float(lens.saturation))
+                    if sat_wall is not wall.image:
+                        # 饱和版整图裁一块（与 sharp 同几何），替换 base
+                        sat_img = _crop_like(sat_wall, wall, outer)
+                        if not sat_img.isNull():
+                            base = _blend_frost(
+                                sat_img, soft, float(lens.frost))
                     self._pm = refract(sharp, radius, lens, k, base=base,
-                                       margin=m)
+                                       margin=m, pre_saturated=True)
                     return self._pm
 
         # 兜底：没有壁纸（纯色 / 动态壁纸 / 读注册表失败）→ 一次性抓屏

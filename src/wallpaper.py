@@ -81,6 +81,43 @@ class Wallpaper:
         return self.rect.contains(QRect(rect))
 
 
+def with_saturation(image: QImage, factor: float) -> QImage:
+    """整块壁纸的饱和度烘焙版（v14j，供液态玻璃底图用）。
+
+    玻璃饱和度原来是每次 LiveLens 重算时对**裁出来的那一小块**做 PIL
+    往返——组件拖动时每次移动都要重跑一次（PIL 往返 + 双倍拷贝），这是
+    "拖动一卡一卡"的主要剩余成本之一。上移到快照层：整块壁纸只有一张，
+    换壁纸/改饱和度才重烘一次，任何位置的表面裁剪都只是 C++ 的 copy。
+
+    结果按 (factor, version) 缓存在模块级；`factor` 中性（≈1.0）时直接
+    返回原图（零拷贝）。PIL 缺席/异常退回原图——效果可以缺，渲染不能崩。
+    """
+    if image is None or image.isNull():
+        return image
+    if abs(factor - 1.0) < 0.004:
+        return image
+    key = (round(factor, 3), version())
+    hit = _SAT_CACHE.get("key")
+    if hit == key and _SAT_CACHE["img"] is not None:
+        return _SAT_CACHE["img"]
+    try:
+        from PIL import Image, ImageEnhance
+        w, h = image.width(), image.height()
+        raw = bytes(image.constBits()) if isinstance(
+            image.constBits(), memoryview) else bytes(image.constBits())
+        pil = Image.frombuffer("RGBA", (w, h), raw, "raw", "BGRA",
+                               0, image.bytesPerLine())
+        pil = ImageEnhance.Color(pil).enhance(float(factor))
+        out = pil.tobytes("raw", "BGRA")
+        # QImage(data, ...) 不拷贝缓冲，Python 侧 out 会被回收——必须 copy()
+        sat = QImage(out, w, h, w * 4, QImage.Format_ARGB32).copy()
+    except Exception:            # noqa: BLE001 —— PIL 缺席就退回原图
+        return image
+    _SAT_CACHE["key"] = key
+    _SAT_CACHE["img"] = sat
+    return sat
+
+
 def _crop(img: QImage, base: QRect, dpr: float, rect, scale: float) -> QImage:
     """从整块底图裁 `rect`（逻辑）→ 物理像素。
 
@@ -274,6 +311,7 @@ def _dpr() -> float:
 
 _CACHE = {"key": None, "wall": None, "t": 0.0}
 _KEYCACHE = {"key": None, "t": 0.0}
+_SAT_CACHE = {"key": None, "img": None}      # 饱和度烘焙版（v14j）
 
 
 def _key() -> tuple:
@@ -327,3 +365,4 @@ def invalidate() -> None:
     """丢掉缓存（测试 / 手动换壁纸后强制重建）。"""
     _CACHE.update(key=None, wall=None, t=0.0)
     _KEYCACHE.update(key=None, t=0.0)
+    _SAT_CACHE.update(key=None, img=None)

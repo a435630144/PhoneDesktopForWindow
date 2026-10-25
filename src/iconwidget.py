@@ -574,9 +574,11 @@ class AppIcon(QWidget):
             box = QRectF(3, 3, s - 6, s - 6)
         tint = folder_tint(self.entry)
         liquid = folder_liquid(self.entry)
-        if liquid:
-            # v14 反馈 10：文件夹颜色选「液态玻璃」——瓷砖本身也是一块玻璃
-            # （半透明白 + 细边），与弹窗的折射背景同一语言
+        if liquid and not self._paint_folder_lens(p, box, s, dpr):
+            # v14 反馈 10：文件夹颜色选「液态玻璃」——瓷砖本身也是一块玻璃。
+            # v14j：默认走真折射（_paint_folder_lens 按全局矩形从壁纸快照
+            # 裁 + 边缘位移）；壁纸快照不可用/表面被关时退回这个半透明白
+            # 渐变兜底（v14d 前的固定观感）。
             grad = QLinearGradient(0, box.top(), 0, box.bottom())
             grad.setColorAt(0.0, QColor(255, 255, 255, 58))
             grad.setColorAt(1.0, QColor(255, 255, 255, 22))
@@ -601,10 +603,8 @@ class AppIcon(QWidget):
                        QPointF(box.right() - s * 0.16, box.top() + 1.2))
         members = self.entry.get("apps", [])
         n = len(members)
-        # v7 B5 反馈 13（2026-10-21）：比例改 0.42 / 0.34 / 0.30（1 / 2 / 3-4
-        # 成员），并且一律走 `appsource.draw_icon` 的 contain 居中绘制——
-        # 旧实现"用请求尺寸算偏移、用 pixmap 实际尺寸落笔"，源图偏小时
-        # 迷你图标缩在槽位左上角，看起来只有十几像素。
+        # v7 B5 反馈 13（2026-10-21）：比例 0.42/0.34/0.30（1/2/3-4 成员），
+        # 一律走 appsource.draw_icon 的 contain 居中绘制。
         if n <= 1:
             slots = [(0.50, 0.50, 0.42)]
         elif n == 2:
@@ -626,6 +626,40 @@ class AppIcon(QWidget):
             appsource.draw_icon(p, app, QRectF(cx - cs / 2.0, cy - cs / 2.0,
                                                cs, cs), dpr)
         p.restore()
+
+    def _paint_folder_lens(self, p, box, s: int, dpr: float) -> bool:
+        """折叠态液态玻璃瓷砖：真折射（v14j 反馈）。
+
+        弹窗是折射玻璃，折叠瓷砖却只有半透明白渐变——同一个文件夹两种
+        材质语言（用户指出"未展开时四周没有物理效果"）。这里按瓷砖的
+        **全局矩形**从壁纸快照裁一块走 liquid_glass 折射（与弹窗同一管
+        线、同一总闸）。返回 False = 快照不可用/总闸关，调用方走兜底。
+
+        瓷砖随 hover/press 动画逐帧重绘：折射贴图用 LiveLens 缓存
+        （矩形/参数/壁纸变了才重算），动画帧零成本。
+        """
+        try:
+            from . import liquid_glass
+            storage = getattr(self, "storage", None) or self._storage()
+            if storage is None:
+                return False
+            if not liquid_glass.surface_enabled(storage, "folder"):
+                return False
+            radius = s * 0.24
+            global_top_left = self.mapToGlobal(box.topLeft().toPoint())
+            grect = QRect(global_top_left,
+                          QSize(max(2, int(box.width())),
+                                max(2, int(box.height()))))
+            lens = liquid_glass.lens_style(storage)
+            if getattr(self, "_tile_lens", None) is None:
+                self._tile_lens = liquid_glass.LiveLens()
+            pm = self._tile_lens.pixmap(grect, radius, lens,
+                                        float(self.devicePixelRatioF() or 1.0))
+            if pm.isNull():
+                return False
+            return liquid_glass.draw_refracted(p, box, radius, pm)
+        except Exception:            # noqa: BLE001 —— 折射失败走兜底渐变
+            return False
 
     def _paint_label(self, p: QPainter, scaled: bool = False,
                      scale: float = 1.0):
