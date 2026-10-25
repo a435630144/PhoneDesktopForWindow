@@ -176,7 +176,7 @@ class AppIcon(QWidget):
     def __init__(self, entry: dict, icon_size: int, in_folder: bool = False,
                  parent=None, chrome_scale: float = 1.0, layout=None,
                  compact: bool = False, show_label: bool = True,
-                 pad_x: int = None, label_style=None):
+                 pad_x: int = None, label_style=None, big: bool = False):
         super().__init__(parent)
         self.entry = entry
         self.in_folder = in_folder
@@ -184,6 +184,7 @@ class AppIcon(QWidget):
         # v14 反馈 3：标签文字样式（颜色/加粗/阴影/描边）。缺省 = Windows
         # 原生白字 + 柔和黑阴影——不传的旧调用（探针 / 测试）观感不变。
         self._label_style = label_style or _ls.default_label_style()
+        self._big = bool(big)          # 大文件夹瓷砖（2×2 跨格，v14t）
         # 外围 chrome 缩放（留白 / 标签字号 / 行高随**用户缩放**同比放大）。
         # v10 B2：不含 dpr——Qt 高 DPI 缩放已经把逻辑值渲染成物理值时乘过
         # 一次（125% 下 1536×864 逻辑视口就是证据），再乘就是 dpr²。
@@ -195,7 +196,16 @@ class AppIcon(QWidget):
         # 密度加密后瘦身——旧绝对值 24m/40m 在 cell 变小后会把图标挤成小点）；
         # 不传（folder 成员 / 探针 / 旧调用）保持 2026-10-18 旧行为。
         self._layout = layout
-        if layout is not None:
+        if self._big and layout is not None:
+            # v14t 大文件夹：widget 直接占 2×2 cell（layout 已按此构建），
+            # 内部 3×3 成员格 + 标签
+            self.icon_size = int(layout.icon_box)
+            self._box_x = 0
+            self._label_h = int(layout.label_h)
+            self._label_font_px = self._scale_font_px(
+                int(layout.font_px))
+            self.setFixedSize(int(layout.widget_w), int(layout.widget_h))
+        elif layout is not None:
             self.icon_size = int(layout.icon_box)      # 绘制区（pixmap 边长）
             self._box_x = int(layout.chrome_x)         # 绘制区左侧留白（居中）
             self._label_h = int(layout.label_h)
@@ -596,6 +606,9 @@ class AppIcon(QWidget):
         缺省回退 theme 深灰瓷砖（iOS 文件夹语言：图标与弹窗同色）。
         """
         s = self.icon_size
+        if self._big:
+            self._paint_folder_big(p, dpr)
+            return
         if self._box_x is not None:
             # v6 A2：layout 模式——瓷砖贴满绘制区（左右各 1px 呼吸）
             box = QRectF(self._box_x + 1, 3, s - 2, s - 2)
@@ -660,6 +673,87 @@ class AppIcon(QWidget):
             appsource.draw_icon(p, app, QRectF(cx - cs / 2.0, cy - cs / 2.0,
                                                cs, cs), dpr)
         p.restore()
+
+    BIG_COLS = 3                    # 大瓷砖内部 3×3 成员格
+    BIG_SLOTS = 9
+
+    def _paint_folder_big(self, p, dpr: float):
+        """大文件夹瓷砖（v14t，用户截图语义）：2×2 跨格，内部 3×3 直显成员。
+
+        * 排布从左到右、从上到下（优先左上对齐）；
+        * 排布满（>9 个成员）时最后一格为「…」占位符；
+        * 瓷砖材质与普通文件夹一致（液态配色走折射，颜色走渐变）；
+        * 交互：成员格点击直接启动（双模式），空白格点击展开（见
+          mousePressEvent/_member_at）。
+        """
+        w, h = self.width(), self.height()
+        members = self.entry.get("apps") or []
+        full = len(members) > self.BIG_SLOTS
+        visible = members[:self.BIG_SLOTS - 1] if full else members[:self.BIG_SLOTS]
+        pad = max(6, int(round(10 * self._m)))
+        label_h = self._label_h if self._label_h else int(round(18 * self._m))
+        grid_w = w - pad * 2
+        grid_h = h - pad - label_h
+        cell_w = grid_w / 3.0
+        cell_h = grid_h / 3.0
+
+        # 瓷砖底（液态/颜色渐变，与 1×1 瓷砖同语言）
+        box = QRectF(1, 1, w - 2, h - 2)
+        if self._big and not self._paint_folder_lens(p, box, w, dpr):
+            tint = folder_tint(self.entry)
+            grad = QLinearGradient(0, box.top(), 0, box.bottom())
+            grad.setColorAt(0.0, tint.lighter(135))
+            grad.setColorAt(1.0, tint.darker(165))
+            p.setPen(QPen(theme.FOLDER_BORDER, 1))
+            p.setBrush(QBrush(grad))
+            p.drawRoundedRect(box, theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+
+        clip = QPainterPath()
+        clip.addRoundedRect(box, theme.RADIUS_PANEL, theme.RADIUS_PANEL)
+        p.save()
+        p.setClipPath(clip)
+        slots = visible + [None] if full else visible + [None] * (self.BIG_SLOTS - len(visible))
+        for idx in range(self.BIG_SLOTS):
+            r, c = divmod(idx, 3)
+            cx = box.left() + pad + c * cell_w + cell_w / 2.0
+            cy = box.top() + pad + r * cell_h + cell_h / 2.0
+            if idx < len(visible):
+                m = visible[idx]
+                side = min(cell_w, cell_h) * 0.72
+                try:
+                    appsource.draw_icon(
+                        p, m, QRectF(cx - side / 2.0, cy - side / 2.0,
+                                     side, side), dpr)
+                except Exception:      # noqa: BLE001
+                    pass
+            elif idx == self.BIG_SLOTS - 1 and full:
+                # 「…」占位符（用户语义：排布满了最后一位是 …）
+                p.setPen(QPen(QColor(255, 255, 255, 200), 2))
+                y = cy
+                for dx in (-8, 0, 8):
+                    p.drawEllipse(QPointF(cx + dx, y), 2.2, 2.2)
+        p.restore()
+
+    def _member_at(self, pos) -> int:
+        """点击位置 -> 内部成员下标（-1 = 空白/…占位/出界）。"""
+        if not self._big:
+            return -1
+        w, h = self.width(), self.height()
+        pad = max(6, int(round(10 * self._m)))
+        label_h = self._label_h if self._label_h else int(round(18 * self._m))
+        grid_w = w - pad * 2
+        grid_h = h - pad - label_h
+        if not (pad <= pos.x() <= w - pad and pad <= pos.y() <= pad + grid_h):
+            return -1
+        c = int((pos.x() - pad) / (grid_w / 3.0))
+        r = int((pos.y() - pad) / (grid_h / 3.0))
+        c = max(0, min(2, c))
+        r = max(0, min(2, r))
+        idx = r * 3 + c
+        members = self.entry.get("apps") or []
+        if idx >= len(members):
+            return -1                  # 空槽 / … 占位
+        return idx
 
     def _paint_folder_lens(self, p, box, s: int, dpr: float) -> bool:
         """折叠态液态玻璃瓷砖：真折射（v14j 反馈）。
@@ -1036,6 +1130,10 @@ class AppIcon(QWidget):
         if self._picking_origin():
             self._forward_pick(e)
             return
+        if e.button() == Qt.LeftButton and self._big:
+            # v14t：大瓷砖按下记录成员槽位（空白 = -1）——release 分流
+            # 启动 / 展开；拖拽仍走既有逻辑（拖的是文件夹本体）
+            self._press_member = self._member_at(e.pos())
         if e.button() == Qt.LeftButton:
             self._press_pos = e.pos()
             self._press_global = e.globalPos()
@@ -1055,6 +1153,18 @@ class AppIcon(QWidget):
         elif e.button() == Qt.RightButton and self._drag_loop:
             # 拖动中按右键 = 取消（与 OLE 拖拽语义一致）
             self._cancel_drag()
+
+    def mouseDoubleClickEvent(self, e):
+        if self._big and e.button() == Qt.LeftButton and not self._mobile():
+            member = self._member_at(e.pos())
+            members = self.entry.get("apps") or []
+            if 0 <= member < len(members):
+                self.activated.emit(members[member])
+                return
+            if member < 0:
+                self.folderClicked.emit(self.entry["id"])
+                return
+        super().mouseDoubleClickEvent(e)
 
     def mouseMoveEvent(self, e):
         if self._drag_loop:
@@ -1081,6 +1191,24 @@ class AppIcon(QWidget):
         self._long.stop()
         if e.button() == Qt.LeftButton:
             self._long_fired = False
+        if e.button() == Qt.LeftButton and self._big and self._press_pos is not None                 and not self._dragged and not self._select_mode():
+            # v14t 大瓷砖：成员格（双模式）/ 空白格（展开）
+            member = getattr(self, "_press_member", -1)
+            self._press_pos = None
+            self._animate(b"press_scale", self._press_scale, 1.0, 160,
+                          effects.spring_curve(1.0, 160))
+            if member < 0:
+                self.pulse()
+                self.folderClicked.emit(self.entry["id"])
+                return
+            members = self.entry.get("apps") or []
+            if member < len(members):
+                app = members[member]
+                if self._mobile():
+                    self.pulse()
+                    self.activated.emit(app)
+                # Windows 习惯 = 双击启动（mouseDoubleClickEvent 分流）
+            return
         if e.button() == Qt.LeftButton and self._press_pos is not None and not self._dragged:
             if long_fired:
                 # 长按已弹菜单：这次抬起不算"单击"——否则用户长按看一眼菜单，

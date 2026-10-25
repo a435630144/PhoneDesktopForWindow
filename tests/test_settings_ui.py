@@ -96,27 +96,27 @@ def main(app):
     # ---------- U1 侧栏导航 ----------
     navs = [b for b in dlg.findChildren(QPushButton)
             if b.objectName() == "navItem"]
-    # v14j：新增「关于」页（9 项）
-    check("U1 左侧栏 9 个导航项", len(navs) == 9, "found=%d" % len(navs))
-    check("U1 导航文案依次为 通用/组件库/Dock 栏/图标与标签/液态玻璃/布局与网格/模式/高级/关于",
+    # v14t：新增「文件夹」页（10 项）
+    check("U1 左侧栏 10 个导航项", len(navs) == 10, "found=%d" % len(navs))
+    check("U1 导航文案依次为 通用/组件库/Dock 栏/图标与标签/液态玻璃/布局与网格/文件夹/模式/高级/关于",
           [b.text() for b in navs]
           == ["通用", "组件库", "Dock 栏", "图标与标签", "液态玻璃",
-              "布局与网格", "模式", "高级", "关于"],
+              "布局与网格", "文件夹", "模式", "高级", "关于"],
           "%s" % [b.text() for b in navs])
     stack = dlg.findChildren(QStackedWidget)
-    check("U1 右栏是 9 页堆栈", len(stack) == 1 and stack[0].count() == 9,
+    check("U1 右栏是 10 页堆栈", len(stack) == 1 and stack[0].count() == 10,
           "stacks=%d" % len(stack))
 
     # ---------- U2 切页 ----------
-    navs[6].click()       # v14h 重排后「模式」仍是第 6 项（0 起算）
+    navs[7].click()       # v14t：「文件夹」插入后「模式」是第 7 项（0 起算）
     app.processEvents()
-    check("U2 点「模式」→ stack 第 6 页",
-          dlg.stack.currentIndex() == 6, "idx=%d" % dlg.stack.currentIndex())
+    check("U2 点「模式」→ stack 第 7 页（v14t：文件夹页插在前面）",
+          dlg.stack.currentIndex() == 7, "idx=%d" % dlg.stack.currentIndex())
     check("U2 页标题跟着变", dlg.lbl_page_title.text() == "模式",
           "%s" % dlg.lbl_page_title.text())
     check("U2 只有当前导航高亮",
           [b.isChecked() for b in navs]
-          == [False, False, False, False, False, False, True, False, False],
+          == [False, False, False, False, False, False, False, True, False, False],
           "%s" % [b.isChecked() for b in navs])
     navs[0].click()
     app.processEvents()
@@ -169,9 +169,8 @@ def main(app):
     check("U5b 无界像素 spin 已退役", not hasattr(dlg, "spin_icon_px"))
 
     # ---------- U6 模式页归属 ----------
-    # v10 A9：Dock 栏插在组件库之后；v14 反馈 3 又插入「图标」页，
-    # 模式页顺延到 6
-    inside = page_widgets(dlg, 6)
+    # v14t：「文件夹」页插在布局之后，模式页顺延到 7
+    inside = page_widgets(dlg, 7)
     # 反馈 16：接管开关下线（启动即接管），模式页只留布局与同步项
     check("U6 接管开关已下线", not hasattr(dlg, "chk_takeover"))
     check("U6 自动克隆在「模式」页", id(dlg.chk_autoclone) in inside)
@@ -198,8 +197,8 @@ def main(app):
     # ---------- U8 可滚动 ----------
     scrolls = dlg.findChildren(QScrollArea)
     # 8 页里「组件库」自带滚动区（不能套第二层），所以外层是 7 个
-    # v14j：9 页 - 组件库（自带滚动区不外裹） = 8 个 QScrollArea
-    check("U8 每页内容装在可滚动区域", len(scrolls) == 8, "found=%d" % len(scrolls))
+    # v14t：10 页 - 组件库（自带滚动区不外裹） = 9 个 QScrollArea
+    check("U8 每页内容装在可滚动区域", len(scrolls) == 9, "found=%d" % len(scrolls))
     check("U8 滚动区无横向滚动条（宽度自适应）",
           all(s.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
               for s in scrolls))

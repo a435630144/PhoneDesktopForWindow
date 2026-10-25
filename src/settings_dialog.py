@@ -148,7 +148,7 @@ class SettingsDialog(QDialog):
     #   * 9 页 -> 8 页。
     NAV = (("general", "通用"), ("widgets", "组件库"), ("dock", "Dock 栏"),
            ("icons", "图标与标签"), ("liquid", "液态玻璃"),
-           ("layout", "布局与网格"),
+           ("layout", "布局与网格"), ("folders", "文件夹"),
            ("mode", "模式"), ("advanced", "高级"), ("about", "关于"))
 
     def __init__(self, window, storage, layer, parent=None, page=None):
@@ -2273,13 +2273,7 @@ class SettingsDialog(QDialog):
         # v14：文件夹悬停自动展开（原来藏在「模式」页的同步卡片里，找不到）。
         # 悬停展开的弹窗在鼠标离开图标与弹窗后会自动收起，点击打开的不受
         # 影响——这一条写进 hint，用户不必试才知道。
-        self.chk_hover_folder = Switch()
-        self.chk_hover_folder.setChecked(
-            bool(self.storage.get_setting("folder_hover_expand")))
-        self.chk_hover_folder.toggled.connect(self._apply_folder_hover)
-        self._row(c, card, i18n.T("settings.layout.folder_hover.title"),
-                  self.chk_hover_folder,
-                  i18n.T("settings.layout.folder_hover.hint"))
+        # v14t：悬停展开迁往新「文件夹」页（文件夹相关设置集中）
         lay.addWidget(card)
 
         card, c = self._card(body, i18n.T("settings.layout.card.paging"))
@@ -2317,6 +2311,37 @@ class SettingsDialog(QDialog):
         self._rule_combos = {}
         self._rebuild_page_rules()
         lay.addWidget(card)
+
+    def _page_folders(self, body, lay):
+        """文件夹页（v14t，用户要求：文件夹相关设置集中一个 sheet）。"""
+        card, c = self._card(body, i18n.T("settings.folders.card.open"))
+        self.chk_hover_folder = Switch()
+        self.chk_hover_folder.setChecked(
+            bool(self.storage.get_setting("folder_hover_expand")))
+        self.chk_hover_folder.toggled.connect(self._apply_folder_hover)
+        self._row(c, card, i18n.T("settings.layout.folder_hover.title"),
+                  self.chk_hover_folder,
+                  i18n.T("settings.layout.folder_hover.hint"))
+        lay.addWidget(card)
+
+        card, c = self._card(body, i18n.T("settings.folders.card.big"))
+        self.chk_folder_big = Switch()
+        self.chk_folder_big.setChecked(grid_flow.folder_big(self.storage))
+        self.chk_folder_big.toggled.connect(self._apply_folder_big)
+        self._row(c, card, i18n.T("settings.folders.big.title"),
+                  self.chk_folder_big,
+                  i18n.T("settings.folders.big.hint"))
+        note = QLabel(i18n.T("settings.folders.big.note"))
+        note.setObjectName("rowHint")
+        note.setWordWrap(True)
+        c.addWidget(note)
+        lay.addWidget(card)
+
+    def _apply_folder_big(self, on):
+        """大文件夹开关（v14t）：布局变化 → 全量重建图标。"""
+        self.storage.set_setting("folder_big", bool(on))
+        self._flush_storage()
+        self._refresh_grid()
 
     def _page_mode(self, body, lay):
         # ---- v9 V4-6 交互方式（Windows 习惯 / 手机习惯） ----

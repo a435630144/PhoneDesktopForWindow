@@ -111,7 +111,7 @@ def main(app):
     st = make_state(dev=False)
     dlg = SettingsDialog(SimpleNamespace(attached=True, update=lambda: None),
                          st, None, page="advanced")
-    check("V2 开发者分页已选中", dlg.stack.currentIndex() == 7,
+    check("V2 开发者分页已选中", dlg.stack.currentIndex() == 8,
           "idx=%d" % dlg.stack.currentIndex())
     subs = getattr(dlg, "_dev_switches", {})
     check("V2b 四个分项开关都在", len(subs) == 4 and set(subs) == set(FLAGS),

@@ -1952,6 +1952,15 @@ class DesktopWindow(QWidget):
                 scale = float(entry.get("icon_scale", 1.0) or 1.0)
             except (TypeError, ValueError):
                 scale = 1.0
+        # v14t：大文件夹 = 2×2 跨格瓷砖（内部 3×3 成员格 + 标签）
+        if grid_flow.is_big_folder(self.storage, entry or {}):
+            cw2, ch2 = m.cw * 2, m.ch * 2
+            box = max(24, int(round(min(cw2, ch2) / 3.0)))
+            return grid_sizing.IconLayout(
+                widget_w=cw2, widget_h=ch2, icon_box=box, chrome_x=0,
+                label_h=max(16, int(round(18 * self.storage.ui_scale()))),
+                font_px=max(10, int(round(12 * self.storage.ui_scale()))),
+                )
         return grid_sizing.icon_layout(
             m.cw, m.ch, self.storage.resolved_icon_fit(m.cw), scale=scale)
 
@@ -1965,7 +1974,8 @@ class DesktopWindow(QWidget):
         layout = self._icon_layout(entry)          # v6 A2 + 反馈 12 单图标倍数
         icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
                        layout=layout,
-                       label_style=self._label_style())
+                       label_style=self._label_style(),
+                       big=grid_flow.is_big_folder(self.storage, entry))
         self._wire_icon(icon)
         icon.set_selected(entry["id"] in self._selected)
         icon.set_selection_visible(self._selection_mode)
@@ -2451,14 +2461,16 @@ class DesktopWindow(QWidget):
 
     # ---------- 锚定小组件占位（widget 是网格一等公民） ----------
     def _widget_cells(self):
-        """可见锚定小组件占据的格子集合（从 storage 读，与实例解耦）。
+        """网格里"不可落子"的格子集合：锚定小组件 + 大瓷砖派生格（v14t）。
 
         v6 §1.3：无界模式下组件不占格（元素可相互重叠）——返回空集，
-        让位 / 避让 / 落点拒绝全部自然失效。
+        让位 / 避让 / 落点拒绝全部自然失效（大文件夹同理：无界不占格，
+        但仍按 2×2 渲染，允许自由摆布时重叠）。
         """
         if grid_flow.free_mode(self.storage):
             return set()
-        return grid_flow.widget_cells(self.storage)
+        return (grid_flow.widget_cells(self.storage)
+                | grid_flow.folder_extra_cells(self.storage))
 
     def on_widget_grid_changed(self):
         """小组件占位变化（落定/移动）：把被挤到的图标挪到第一个空格。

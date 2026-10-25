@@ -53,11 +53,71 @@ def reading_order(entries: Iterable[dict], cols: int) -> List[dict]:
     return sorted(entries, key=lambda e: (int(e.get("row", 0)), int(e.get("col", 0))))
 
 
-def occupied_cells(entries: Iterable[dict], cols: int) -> List[Cell]:
-    """排序去重后的占用格集合。cols 仅用于签名对称（调用方已夹紧 col）。"""
+def folder_big(storage) -> bool:
+    """大文件夹模式（v14t）：开 = 所有文件夹瓷砖 2×2 跨格、内部 3×3 直显。"""
+    try:
+        return bool(storage.get_setting("folder_big"))
+    except Exception:        # noqa: BLE001
+        return False
+
+
+def is_big_folder(storage, entry) -> bool:
+    """该条目是否按大文件夹渲染（文件夹 + 全局开关；无界模式也算——
+    只是不占格）。"""
+    try:
+        if str(entry.get("type") or "") != "folder":
+            return False
+    except Exception:        # noqa: BLE001
+        return False
+    return folder_big(storage)
+
+
+def big_extra_cells(entry, cols: int):
+    """大文件夹瓷砖除自身格外占用的 3 格（右/下/右下）。
+
+    右边贴边（col+1 >= cols）放不下 2×2 时返回 None——pack 时跳到
+    下一行再放。
+    """
+    col = int(entry.get("col", 0) or 0)
+    row = int(entry.get("row", 0) or 0)
+    if col + 1 >= max(1, int(cols)):
+        return None
+    return [(col + 1, row), (col, row + 1), (col + 1, row + 1)]
+
+
+def folder_extra_cells(storage) -> set:
+    """全部大文件夹的额外占格集合（网格模式；无界模式不占格）。"""
+    out = set()
+    if not folder_big(storage):
+        return out
+    cols = max(1, int(getattr(storage, "columns", 0) or 0))
+    for e in storage.layout:
+        if str(e.get("type") or "") != "folder":
+            continue
+        extra = big_extra_cells(e, cols)
+        if extra:
+            out.update(extra)
+    return out
+
+
+def occupied_cells(entries: Iterable[dict], cols: int,
+                   storage=None) -> List[Cell]:
+    """排序去重后的占用格集合。cols 仅用于签名对称（调用方已夹紧 col）。
+
+    storage 传入时追加大文件夹的 3 个派生格（v14t）——拖拽落点/组件
+    寻位等"什么格子能放"的判定全部继承，大瓷砖不会被压。
+    """
     seen = set()
     for e in entries:
         seen.add(_cell_of(e))
+    if storage is not None and folder_big(storage) and not free_mode(storage):
+        cols_i = max(1, int(cols))
+        for e in entries:
+            if str(e.get("type") or "") != "folder":
+                continue
+            extra = big_extra_cells(e, cols_i)
+            if extra:
+                seen.update(extra)
     return sorted(seen)
 
 
@@ -1064,6 +1124,8 @@ def icon_center_offset(storage, entry=None) -> Cell:
     （反馈 12：单图标大小覆盖）——否则放大后的图标仍然按 100% 居中，
     看起来是"往右下角长"。
     """
+    if is_big_folder(storage, entry):
+        return (0, 0)          # 大瓷砖锚定自身格左上（跨 2×2，不居中）
     from . import grid_sizing
     cw, ch = cell_size(storage)
     # 2026-10-20 反馈 3：占比**必须**与 DesktopWindow._icon_layout 同源。

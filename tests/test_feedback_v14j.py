@@ -649,6 +649,80 @@ def main(app):
           len(st_keep._data["layout"]) == 1
           and st_keep.get_setting("liquid_strength") == 60)
 
+
+    # ---------- BG v14t：大文件夹（2×2 跨格，内部 3×3 直显） ----------
+    from src import grid_flow as _gf
+    stb = _st("big.json")
+    stb.set_setting("folder_big", True)
+    stb._data["layout"] = [
+        {"id": "fb", "type": "folder", "col": 0, "row": 0, "name": "B",
+         "app": {"name": "B", "target": "B", "kind": "app"},
+         "apps": [{"id": f"m{i}", "name": f"m{i}", "target": f"t{i}",
+                   "kind": "app"} for i in range(11)]},
+        {"id": "x1", "type": "app", "col": 0, "row": 0,
+         "app": {"name": "x", "target": "x", "kind": "app"}},
+    ]
+    stb.save()
+    check("BG folder_big 判定", _gf.folder_big(stb) is True)
+    check("BGb is_big_folder（仅文件夹）",
+          _gf.is_big_folder(stb, stb.find_entry("fb")) is True
+          and _gf.is_big_folder(stb, {"type": "app"}) is False)
+    extra = _gf.big_extra_cells(stb.find_entry("fb"), 10)
+    check("BGc 派生格 = 右/下/右下",
+          sorted(extra) == sorted([(1, 0), (0, 1), (1, 1)]), str(extra))
+    check("BGd 右边贴边 -> None（放不下 2×2）",
+          _gf.big_extra_cells({"col": 9, "row": 0}, 10) is None)
+    allex = _gf.folder_extra_cells(stb)
+    check("BGe 全量派生集合", (1, 0) in allex and (1, 1) in allex,
+          str(sorted(allex)))
+
+    # 渲染：11 成员 -> 8 图标 + … 占位
+    from src.iconwidget import AppIcon as _AI2
+    big_icon = _AI2(stb.find_entry("fb"), 48, parent=None, big=True)
+    big_icon.setFixedSize(120, 120)
+    img_b = QImage(120, 120, QImage.Format_ARGB32)
+    img_b.fill(QColor(20, 20, 30))
+    bp = QPainter(img_b)
+    big_icon._paint_folder_big(bp, 1.0)
+    bp.end()
+    # 8 个成员都画了（采样各槽中心非空）
+    centers = [(20, 20), (60, 20), (100, 20), (20, 60),
+               (60, 60), (100, 60), (20, 100), (60, 100)]
+    drawn = sum(1 for x, y in centers if img_b.pixelColor(x, y).alpha() > 0)
+    check("BGf 3×3 内格绘制（8 成员 + … 占位）", drawn >= 6,
+          "drawn=%d" % drawn)
+    check("BGf _member_at 槽位映射",
+          big_icon._member_at(QPoint(60, 20)) == 1
+          and big_icon._member_at(QPoint(5, 5)) == -1)
+    big_icon.deleteLater()
+
+    # 设置页：大文件夹开关写键
+    from src.settings_dialog import SettingsDialog as _SD4
+    st_bg2 = _st("bigdlg.json")
+    dlg_bg = _SD4(type("W4", (), {"attached": False})(), st_bg2, None)
+    check("BGg 文件夹页有大文件夹开关", hasattr(dlg_bg, "chk_folder_big"))
+    dlg_bg.chk_folder_big.setChecked(True)
+    check("BGh 开关写 folder_big", st_bg2.get_setting("folder_big") is True)
+    dlg_bg.deleteLater()
+
+    # 布局集成：pack 后 2×2 块不被其它条目压
+    stb2 = _st("bigpack.json")
+    stb2.set_setting("folder_big", True)
+    stb2._data["layout"] = [
+        {"id": "fb", "type": "folder", "col": 0, "row": 0, "name": "B",
+         "app": {"name": "B", "target": "B", "kind": "app"},
+         "apps": [{"id": "m", "name": "m", "target": "m", "kind": "app"}]},
+    ]
+    stb2.save()
+    stb2.pack_layout()
+    f_pos = (stb2.find_entry("fb")["col"], stb2.find_entry("fb")["row"])
+    check("BGi pack 后右格空出（2×2 不被占）",
+          f_pos == (0, 0)
+          and all(stb2.find_entry(e["id"]) is None or e["id"] == "fb"
+                  for e in stb2._data["layout"] if e["id"] != "fb")
+          and (1, 0) not in [(e["col"], e["row"]) for e in stb2._data["layout"]
+                             if e["id"] != "fb"])
+
     print()
     if failures:
         print("==== test_feedback_v14j: %d 项失败: %s" % (len(failures), failures))

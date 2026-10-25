@@ -120,6 +120,7 @@ DEFAULT_SETTINGS = {
     "label_outline_color": "#000000",
     "label_outline_width": 1,       # 描边粗细 1~3
     "label_font_scale": 100,       # 图标字号缩放 %（70~140，v14q）
+    "folder_big": False,           # 大文件夹模式（2×2 瓷砖直显成员，v14t）
     # v14j：图标悬停高亮与动画（读取唯一入口 label_style.hover_style）
     "icon_hover_color": "",         # "" = 跟内置白（theme.HOVER_BORDER）
     "icon_hover_fill": 8,           # 悬停底填充 %（0~40）
@@ -271,6 +272,20 @@ def entry_app(entry) -> dict:
     app = entry.get("app")
     return app if isinstance(app, dict) else {}
 
+
+
+
+def _big_block_used(gf, storage, entry, col, row, cols, used) -> bool:
+    """大文件夹 2×2 占格登记（v14t）。右边贴边放不下时把起点推进到
+    下一行行首（调用方循环继续扫描），返回是否成功落在 (col,row)。"""
+    if not gf.is_big_folder(storage, entry):
+        return True
+    if col + 1 >= cols:
+        return False
+    used.add((col + 1, row))
+    used.add((col, row + 1))
+    used.add((col + 1, row + 1))
+    return True
 
 class Storage:
     def __init__(self, path=None):
@@ -835,12 +850,14 @@ class Storage:
                 group.sort(key=lambda e: (e.get("row", 0), e.get("col", 0)))
                 col, row = 0, page * rpp
                 for e in group:
-                    while (col, row) in used:
+                    while (col, row) in used or not _big_block_used(
+                            grid_flow, self, e, col, row, cols, used):
                         col += 1
                         if col >= cols:
                             col, row = 0, row + 1
                     e["col"], e["row"] = col, row
                     used.add((col, row))
+                    _big_block_used(grid_flow, self, e, col, row, cols, used)
                     col += 1
                     if col >= cols:
                         col, row = 0, row + 1
@@ -849,12 +866,14 @@ class Storage:
                          key=lambda e: (e.get("row", 0), e.get("col", 0)))
         col = row = 0
         for e in entries:
-            while (col, row) in used:
+            while (col, row) in used or not _big_block_used(
+                    grid_flow, self, e, col, row, cols, used):
                 col += 1
                 if col >= cols:
                     col, row = 0, row + 1
             e["col"], e["row"] = col, row
             used.add((col, row))
+            _big_block_used(grid_flow, self, e, col, row, cols, used)
             col += 1
             if col >= cols:
                 col, row = 0, row + 1
@@ -908,9 +927,10 @@ class Storage:
         return col, row
 
     def first_free_cell(self, extra_used=()):
-        """第一个空格（排除 widget 占位 + Dock 禁放格 + 额外占用）。"""
+        """第一个空格（排除 widget 占位 + 大瓷砖占格 + Dock 禁放格）。"""
         from . import grid_flow  # 延迟导入：grid_flow 依赖 storage 的尺寸访问器
-        used = set(grid_flow.widget_cells(self)) | self._side_blocked()
+        used = (set(grid_flow.widget_cells(self))
+                | grid_flow.folder_extra_cells(self) | self._side_blocked())
         if extra_used:
             used |= set(extra_used)
         return self._first_free_cell(extra_used=used)
@@ -1111,11 +1131,13 @@ class Storage:
                                         int(e.get("col", 0) or 0)))
         col = row = 0
         for e in entries:
-            while (col, row) in used:
+            while (col, row) in used or not _big_block_used(
+                    grid_flow, self, e, col, row, cols, used):
                 col += 1
                 if col >= cols:
                     col, row = 0, row + 1
             e["col"], e["row"] = col, row
+            _big_block_used(grid_flow, self, e, col, row, cols, used)
             col += 1
             if col >= cols:
                 col, row = 0, row + 1
