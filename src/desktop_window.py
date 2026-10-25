@@ -8,7 +8,7 @@ import os
 
 from PySide6.QtCore import (QPoint, QProcess, QRect, Qt, QTimer,
                             QVariantAnimation, Signal)
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QRegion
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 from . import appsource
@@ -1879,6 +1879,11 @@ class DesktopWindow(QWidget):
         icon.iconScaleChanged.connect(self._on_icon_scale)
         icon.openLocation.connect(self._on_open_location)
         icon.dragStarted.connect(self._on_drag_started)
+        # v14k3：弹窗打开期间按住锚点瓷砖拖动 = 直接拖文件夹（幕布掩膜
+        # 放行锚点后，按压原生到达图标）。拖动开始即收弹窗——锚点在动，
+        # 弹窗不留。守卫：只对"当前弹窗的锚点"生效，其余拖动无感。
+        icon.dragStarted.connect(
+            lambda ic=icon: self._on_anchor_drag_started(ic))
         icon.dragFinished.connect(self._on_drag_finished)
         icon.reflowHover.connect(self._on_reflow_hover)
         icon.reflowDrop.connect(self._on_reflow_drop)
@@ -3284,6 +3289,16 @@ class DesktopWindow(QWidget):
         # 关闭弹窗（与 DesktopWindow 空白点击关闭双保险）。
         scrim = ScrimWindow()
         scrim.clicked.connect(self._close_popup)
+        # v14k3：幕布**挖掉锚点瓷砖**——弹窗开着时按住文件夹可以直接拖走
+        # （旧实现幕布全屏拦输入，第一下按压被"点击外部关闭"吞掉，拖拽
+        # 得按第二次；用户反馈不合理）。掩膜同时让源瓷砖不被压暗（iOS
+        # 同语义）。点击（无拖动）→ folderClicked → open_folder 的 toggle
+        # 语义关闭弹窗，与旧行为一致。
+        if icon is not None:
+            anchor_g = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
+            anchor_local = anchor_g.translated(-scrim.geometry().topLeft())
+            scrim.setMask(QRegion(scrim.geometry()).subtracted(
+                QRegion(anchor_local)))
         # 2026-10-19 反馈：幕布铺满桌面带且层级最高，拖放必须由它转发到
         # 桌面窗口——否则"从文件夹里把图标拖出来"的 drop 会被幕布吞掉
         scrim.dropReceived.connect(self._drop_from_scrim)
@@ -3381,6 +3396,16 @@ class DesktopWindow(QWidget):
         keep = getattr(self, "_closing_band_widgets", None)
         if keep:
             self._closing_band_widgets = [x for x in keep if x is not w]
+
+    def _on_anchor_drag_started(self, icon):
+        """弹窗锚点瓷砖开始拖动（v14k3）：收起弹窗。
+
+        守卫 `self._folder_open_icon is icon`——dragStarted 对所有图标
+        都发；只有"当前弹窗的锚点"才触发收起，其余拖动（包括弹窗成员
+        往外拖）无感。连接在 _wire_icon 一次性建立，弹窗开关多次不累计。
+        """
+        if self._popup is not None and self._folder_open_icon is icon:
+            self._close_popup()
 
     def _on_popup_closed(self):
         """弹窗自行关闭后的收尾（closed 信号）：清引用 + 源图标退出

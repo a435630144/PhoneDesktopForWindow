@@ -390,6 +390,50 @@ def main(app):
         check("W3 液态瓷砖角落不是不透明白/灰（事故回归）", True, "skip-no-lens")
     ticon.deleteLater()
 
+
+    # ---------- K1-K3 弹窗开着按住锚点瓷砖可拖动（v14k3） ----------
+    # 事故：幕布全屏拦输入，弹窗开着时第一下按压被"点击外部关闭"吞掉，
+    # 拖文件夹得按第二次。修复：幕布 setMask 挖掉锚点 + 锚点拖动收弹窗。
+    from PySide6.QtCore import QPoint as _QPoint
+    stk = _st("mask.json")
+    stk.layout.append({"id": "f1", "type": "folder", "col": 0, "row": 0,
+                       "page": 0, "name": "F1",
+                       "app": {"name": "F1", "target": "F1", "kind": "app"},
+                       "apps": [{"name": "m1", "target": "m1",
+                                 "kind": "app"}]})
+    stk.layout.append({"id": "f2", "type": "folder", "col": 1, "row": 0,
+                       "page": 0, "name": "F2",
+                       "app": {"name": "F2", "target": "F2", "kind": "app"},
+                       "apps": [{"name": "m1", "target": "m1",
+                                 "kind": "app"}]})
+    stk.save()
+    wmk = DesktopWindow(stk)
+    wmk.open_folder("f1")
+    check("K1 弹窗打开", wmk._popup is not None and wmk._scrim is not None)
+    if wmk._scrim is not None:
+        mask = wmk._scrim.mask()
+        anchor_icon = wmk._folder_open_icon
+        ag = anchor_icon.geometry()
+        gpos = anchor_icon.mapToGlobal(ag.center())
+        local = gpos - wmk._scrim.geometry().topLeft()
+        check("K1b 幕布掩膜挖掉锚点（锚点中心不在掩膜内）",
+              not mask.contains(local),
+              "local=%s" % local)
+        far = _QPoint(wmk._scrim.geometry().center())
+        check("K1c 掩膜仍覆盖其余区域", mask.contains(far))
+    # K2：锚点拖动 -> 收弹窗
+    wmk._on_anchor_drag_started(wmk._folder_open_icon)
+    check("K2 锚点拖动开始 -> 弹窗收起", wmk._popup is None)
+    # K3：非锚点拖动 -> 不动
+    wmk.open_folder("f1")
+    other_icon = wmk.icons.get("f2")
+    wmk._on_anchor_drag_started(other_icon)
+    check("K3 非锚点拖动不影响弹窗",
+          wmk._popup is not None and
+          wmk._popup.entry.get("id") == "f1")
+    wmk._close_popup()
+    wmk.close()
+
     print()
     if failures:
         print("==== test_feedback_v14j: %d 项失败: %s" % (len(failures), failures))
