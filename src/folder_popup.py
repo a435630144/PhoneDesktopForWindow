@@ -115,6 +115,10 @@ def popup_metrics(cell_w: int, n_members: int = 0, avail_h: int = 0) -> dict:
 
 ZOOM_FROM = 0.62   # 打开时玻璃初始缩放（相对最终尺寸）
 ZOOM_TO = 0.55     # 关闭时玻璃收起的缩放
+# hover 自动关闭：拍长 × 拍数（v14j 由 250×3≈750ms 提速——用户反馈移走后
+# 关得不够利落；225×2≈450ms 兼顾"划过去不算离开"的抖动容错）
+AUTO_CLOSE_TICK_MS = 225
+AUTO_CLOSE_MISS = 2
 SCRIM_ALPHA = 71   # 幕布黑透明度（0.28 × 255 ≈ 71）
 TINT_OVERLAY_ALPHA = 46   # 弹窗背板上的色板色覆盖层透明度
 
@@ -411,7 +415,7 @@ class FolderPopup(QWidget):
         self._opened_by_hover = False
         self._auto_close_miss = 0
         self._auto_close = QTimer(self)
-        self._auto_close.setInterval(250)
+        self._auto_close.setInterval(AUTO_CLOSE_TICK_MS)
         self._auto_close.timeout.connect(self._auto_close_tick)
         self._zoom = 1.0             # 玻璃表面缩放（开合动效驱动）
         self._zoom_center = QPointF(0.5, 0.5)  # 缩放中心（弹窗本地坐标）
@@ -889,10 +893,15 @@ class FolderPopup(QWidget):
             self._auto_close.stop()
 
     def _pointer_inside(self) -> bool:
-        """鼠标是否还在"文件夹图标"或"弹窗自己"上。
+        """鼠标是否还在"文件夹图标 / 弹窗自己 / 弹窗挂出的子表单"上。
 
         用全局光标坐标做命中（`underMouse()` 依赖 enter/leave 事件，分层
         窗口上会丢事件，不可靠）。锚点矩形不存在时只认弹窗自身。
+
+        v14j：颜色 / 添加应用是**独立顶层窗口**（folder_forms），不在这条
+        命中里就会被当成"离开弹窗"，连丢几拍把弹窗连同表单一起关掉
+        （2026-10-25 用户反馈：hover 展开后点开配色/添加应用，鼠标移过去
+        选色 ≈0.75s 后全消失）。重命名输入框 `_editor` 同理。
         """
         pos = QCursor.pos()
         if self.frameGeometry().contains(pos):
@@ -900,10 +909,23 @@ class FolderPopup(QWidget):
         anchor = self._anchor_rect
         if anchor is not None and anchor.isValid() and anchor.contains(pos):
             return True
+        for attr in ("_tint_form", "_add_form", "_editor"):
+            form = getattr(self, attr, None)
+            if form is None:
+                continue
+            try:
+                if form.isVisible() and form.frameGeometry().contains(pos):
+                    return True
+            except RuntimeError:
+                continue          # 表单已销毁（deleteLater 后的 wrapper）
         return False
 
     def _auto_close_tick(self):
-        """连丢 3 拍（~750ms）才关：鼠标短暂掠过的抖动不该把弹窗关掉。"""
+        """连丢 2 拍（~450ms）才关：鼠标短暂掠过的抖动不该把弹窗关掉。
+
+        v14j：250ms×3(~750ms) 提速到 225ms×2(~450ms)——用户反馈移走后
+        关得不够利落；阈值 1 会把"划过去"当离开，2 拍是手感折中。
+        """
         if not self._opened_by_hover or self._closing:
             self._auto_close.stop()
             return
@@ -911,7 +933,7 @@ class FolderPopup(QWidget):
             self._auto_close_miss = 0
             return
         self._auto_close_miss += 1
-        if self._auto_close_miss >= 3:
+        if self._auto_close_miss >= AUTO_CLOSE_MISS:
             self._auto_close.stop()
             self.close()
 

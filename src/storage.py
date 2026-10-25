@@ -1104,6 +1104,27 @@ class Storage:
                 col, row = 0, row + 1
         return len(entries)
 
+    def prune_dead_members(self, live_ids):
+        """文件夹成员存活校验（v14j）：磁盘上已消失的文件成员从 apps 剔除。
+
+        外部（资源管理器）把文件移走/删除时，顶层条目有增量同步清理，但
+        文件夹成员从不修剪——成员数不减，"只剩一个自动解散"永远触发不了
+        （2026-10-25 用户反馈：移走文件后文件夹不自行解除）。返回受影响
+        的文件夹 id 列表；调用方（窗口层）负责对 ≤1 成员触发行解散。
+        """
+        touched = []
+        for e in self._data["layout"]:
+            if e.get("type") != "folder":
+                continue
+            apps = e.get("apps") or []
+            kept = [m for m in apps
+                    if not (m and m.get("kind") == "file"
+                            and m.get("id") not in live_ids)]
+            if len(kept) != len(apps):
+                e["apps"] = kept
+                touched.append(e.get("id"))
+        return touched
+
     def rescan_desktop(self, repack: bool = False) -> int:
         """重新扫描桌面：补新增、清丢失（同名路径哈希消失的条目）。
 
@@ -1118,6 +1139,7 @@ class Storage:
         """
         from . import appsource
         live = {f["id"] for f in appsource.scan_desktop_files()}
+        self.prune_dead_members(live)       # v14j：文件夹死成员同步修剪
         before = len(self._data["layout"])
         # 文件夹内的成员也可能来自桌面文件：解散语义不变，只清理顶层 df 条目
         self._data["layout"] = [
@@ -1148,6 +1170,7 @@ class Storage:
         from . import appsource
         files = appsource.scan_desktop_files()
         live_ids = {f["id"] for f in files}
+        self.prune_dead_members(live_ids)   # v14j：文件夹死成员增量修剪
 
         moved, removed_ids, kept = [], [], []
         for e in self._data["layout"]:

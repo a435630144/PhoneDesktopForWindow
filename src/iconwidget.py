@@ -1578,6 +1578,7 @@ class AppIcon(QWidget):
                 menu.addSeparator()
         if self.in_folder:
             menu.addAction("打开", self._open)
+            menu.addAction("在文件夹中显示", self._reveal)
             menu.addAction("移出文件夹", self._remove_from_folder)
         elif self.is_folder:
             menu.addAction("打开", self._open_folder)

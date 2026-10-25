@@ -196,6 +196,14 @@ class BandGuard(QObject):
             widget = ref() if ref is not None else None
             if widget is None:
                 continue
+            # 正在正常关闭途中的短命窗口（文件夹弹窗/幕布的收起动画，
+            # `_closing=True`）不是"被杀"：只摘登记，不计复活、不拉起。
+            # 2026-10-25 事故：每次 hover 开合都会制造两个死句柄，旧逻辑
+            # 把它们当"被外部销毁"逐个 destroy()+show() 拉活，120 秒内第
+            # 9 次就触发 _give_up_and_exit——用户看到"先回原生桌面再退出
+            # 接管"。正常关闭的窗口绝不该进复活路径。
+            if getattr(widget, "_closing", False):
+                continue
             if len(self._revives) >= _REVIVE_MAX:
                 self._give_up_and_exit()
                 return True

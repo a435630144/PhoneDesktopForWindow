@@ -3053,9 +3053,27 @@ class DesktopWindow(QWidget):
         只做结构同步（_sync_structure 走弹簧动画），**不重排、不翻页**——
         文件系统事件是被动发生的，用户摆放的位置必须原样保留。
         """
+        self._dissolve_degenerate_folders()   # v14j：外部移走文件后 folder 解除
         self._sync_structure()
         self._cull_page_icons()
         self.storage.save()
+
+    def _dissolve_degenerate_folders(self):
+        """成员 ≤1 的文件夹自动解散（v14j）。
+
+        storage 的增量/重扫会先修剪"磁盘上已消失"的文件成员；这里把因此
+        只剩 0/1 名的文件夹收掉（最后一名放回桌面、文件夹本体移除）。
+        2026-10-25 用户反馈：移走文件夹内的文件只剩一个时，文件夹不自行
+        解除——当时三条弹窗内路径都有检查，唯独外部移走/删除绕过了。
+        """
+        for e in list(self.storage.layout):
+            if e.get("type") != "folder":
+                continue
+            apps = e.get("apps") or []
+            if len(apps) == 1:
+                self._dissolve_folder(e)
+            elif not apps:
+                self._on_dissolve(e.get("id"))
 
     def rescan_desktop(self):
         """重新扫描桌面文件：补新增、清丢失（仅布局，不动文件）。
@@ -3066,6 +3084,7 @@ class DesktopWindow(QWidget):
         桌面），显式回到第 0 页展示重扫结果。
         """
         added, removed = self.storage.rescan_desktop()
+        self._dissolve_degenerate_folders()   # v14j：重扫后收掉退化文件夹
         self._sync_structure()
         if self._page != 0:
             self.goto_page(0, animate=False)
@@ -3305,16 +3324,62 @@ class DesktopWindow(QWidget):
                 popup.closed.disconnect(self._on_popup_closed)
             except Exception:
                 pass
+            self._untrack_band_widget(popup)
+            self._keep_until_destroyed(popup)
             popup.close()
         scrim = self._scrim
         self._scrim = None
         if scrim is not None:
+            self._untrack_band_widget(scrim)
+            self._keep_until_destroyed(scrim)
             scrim.fade_out_then_close()
+
+    def _untrack_band_widget(self, w):
+        """短命窗口（弹窗/幕布）关闭前从守护摘除。
+
+        2026-10-25 事故：它们 open 时被 track、close 后从不 untrack，
+        句柄一死 BandGuard 就当"被外部销毁"去 destroy()+show() 拉活，
+        多次 hover 开合喂爆复活计数器（120 秒 8 次）→ 恢复原生图标并
+        整个程序退出接管。必须在句柄还活着时摘（winId() 此刻有效）。
+        """
+        guard = getattr(self, "_band_guard", None)
+        if guard is None or w is None:
+            return
+        try:
+            guard.untrack(int(w.winId()))
+        except (RuntimeError, AttributeError, TypeError):
+            pass
+
+    def _keep_until_destroyed(self, w):
+        """替正在播收起动画的窗口保住 Python 引用。
+
+        弹窗/幕布的收起动画（180~200ms）挂在窗口自己身上，唯一的 Python
+        引用一旦被清（self._popup=None），wrapper 被 GC 就连带销毁 C++
+        窗口——动画中途夭折、_really_close 不执行、unregister 残留。
+        挂到 destroyed 信号再放手。
+        """
+        keep = getattr(self, "_closing_band_widgets", None)
+        if keep is None:
+            keep = self._closing_band_widgets = []
+        keep.append(w)
+        try:
+            w.destroyed.connect(
+                lambda *_, p=w: self._discard_closing_widget(p))
+        except (RuntimeError, TypeError):
+            self._discard_closing_widget(w)
+
+    def _discard_closing_widget(self, w):
+        keep = getattr(self, "_closing_band_widgets", None)
+        if keep:
+            self._closing_band_widgets = [x for x in keep if x is not w]
 
     def _on_popup_closed(self):
         """弹窗自行关闭后的收尾（closed 信号）：清引用 + 源图标退出
         打开态 + 幕布淡出销毁。幂等：_close_popup 已清场时为空操作。"""
+        popup = self._popup
         self._popup = None
+        self._untrack_band_widget(popup)
+        self._keep_until_destroyed(popup)
         # 反馈 6：拖出预览的红框是幕布转发驱动的，弹窗一关必须撤掉，
         # 否则桌面上留一个永不消失的红框（成员的 dragFinished 送不到
         # DesktopWindow，_on_drag_finished 的清理路径不走这里）
@@ -3324,6 +3389,8 @@ class DesktopWindow(QWidget):
         scrim = self._scrim
         self._scrim = None
         if scrim is not None:
+            self._untrack_band_widget(scrim)
+            self._keep_until_destroyed(scrim)
             scrim.fade_out_then_close()
 
     def _exit_folder_open_state(self):
