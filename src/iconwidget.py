@@ -1316,6 +1316,14 @@ class AppIcon(QWidget):
         self._core_target_id = None
         self._core_in = False
         self._drag_loop = True
+        # P3：拖动开始时缓存同窗桌面图标候选（_best_overlap_icon 用）
+        host = self.window()
+        if host is not None:
+            try:
+                self._drag_kids = [w for w in host.findChildren(AppIcon)
+                                   if w is not self and not w.in_folder]
+            except RuntimeError:
+                self._drag_kids = None
         # 键盘焦点给拖拽源：Esc 取消（keyPressEvent）走焦点投递，
         # grabMouse 只管鼠标。真实鼠标与注入按键共用同一路径。
         self.setFocus()
@@ -1535,17 +1543,26 @@ class AppIcon(QWidget):
             (r.x(), r.y(), r.width(), r.height()))
 
     def _best_overlap_icon(self):
-        """与拖影重叠最多的同级桌面图标（排除自身/文件夹成员）。"""
+        """与拖影重叠最多的同级桌面图标（排除自身/文件夹成员）。
+
+        P3（2026-10-26）：候选列表在拖动开始时缓存一次（_drag_kids），
+        不再每次鼠标事件 findChildren + 全量扫——鼠标 125~1000Hz 下这是
+        拖动期间最大的 CPU 项。列表失效由拖动结束清缓存保证。
+        """
         host = self.window()
         if host is None:
             return None, 0.0
+        kids = getattr(self, "_drag_kids", None)
+        if kids is None:
+            try:
+                kids = [w for w in host.findChildren(AppIcon)
+                        if w is not self and not w.in_folder]
+            except RuntimeError:
+                return None, 0.0
+            self._drag_kids = kids
         best, best_ratio = None, 0.0
-        try:
-            kids = host.findChildren(AppIcon)
-        except RuntimeError:
-            return None, 0.0
         for w in kids:
-            if w is self or w.in_folder or not w.isVisible():
+            if not w.isVisible():
                 continue
             ratio = self._overlap_ratio(w)
             if ratio > best_ratio:
@@ -1603,6 +1620,7 @@ class AppIcon(QWidget):
         self._finish_drag(None)
 
     def _after_drag(self):
+        self._drag_kids = None          # P3：候选缓存随拖动结束失效
         """拖拽结束公共清理：撤拖影、发 dragFinished、落位回弹动画。
 
         整体防御 RuntimeError：drop 触发 rebuild 后本部件可能已被

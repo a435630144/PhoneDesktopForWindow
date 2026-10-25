@@ -16,7 +16,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt  # noqa: E402
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter, QLinearGradient  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
@@ -818,6 +818,112 @@ def main(app):
           and st_d3.get_setting("folder_auto_close_ms") == 1200)
     dlg_t.deleteLater()
     pop_t.close()
+
+
+    # ---------- PF v14w：性能与语义批次（P0-3/P1/P2） ----------
+    # PF1 翻页步进不再全窗 update（P1-1）
+    stp = _st("flipperf.json")
+    # 两页条目（单页时 goto_page(1) 被 page_count 夹回 0 提前返回）
+    stp._data["layout"] = [
+        {"id": "a", "type": "app", "col": 0, "row": 0,
+         "app": {"name": "a", "target": "a", "kind": "app"}},
+        {"id": "b", "type": "app", "col": 0, "row": 5,
+         "app": {"name": "b", "target": "b", "kind": "app"}}]
+    stp.save()
+    wf = DesktopWindow(stp)
+    wf._band_guard._timer.stop(); wf._band_guard.shutdown()
+    wf.resize(400, 300); wf._update_grid_metrics()
+    wf.goto_page(0, animate=False)
+    upd = []
+    wf.update = lambda: upd.append(1)
+    wf.goto_page(1, animate=True)
+    if wf._flip_anim is not None:
+        n_mid = 0
+        for _ in range(5):
+            wf._on_flip_step(0.3)
+            n_mid = len(upd)
+        wf._on_flip_done()
+        # 动画步进期间零 update；完成回调恰好一次终态重绘（合法）
+        check("PF1 翻页步进零全窗 update（终态 1 次除外）",
+              n_mid == 0 and len(upd) == 1, str(upd))
+    else:
+        check("PF1 翻页步进零全窗 update（终态 1 次除外）", upd == [],
+              "no-anim " + str(upd))
+    wf.close()
+
+    # PF2 重采样缓存：draw_icon 对非方形/尺寸差源触发二次缩放并缓存
+    from src import appsource as _as
+    _as._RSCALE_CACHE.clear()
+    src_img = QImage(64, 20, QImage.Format_ARGB32)   # 非方形（必触发缩放）
+    src_img.fill(QColor(200, 40, 40))
+    tmp_icon = os.path.join(tempfile.gettempdir(), "pf2_icon.png")
+    src_img.save(tmp_icon)
+    app2 = {"name": "PF2", "target": tmp_icon, "icon_path": tmp_icon}
+    cvs = QImage(80, 80, QImage.Format_ARGB32)
+    cp = QPainter(cvs)
+    _as.draw_icon(cp, app2, QRectF(10, 10, 12, 12), 1.0)
+    n1 = len(_as._RSCALE_CACHE)
+    _as.draw_icon(cp, app2, QRectF(10, 10, 12, 12), 1.0)
+    cp.end()
+    n2 = len(_as._RSCALE_CACHE)
+    check("PF2 二次缩放进缓存且第二次命中（条目数不变）",
+          n1 >= 1 and n2 == n1, "%d -> %d" % (n1, n2))
+    os.remove(tmp_icon)
+
+    # PF3 日志轮转：写 300KB -> 读取截断
+    logp = os.path.join(tempfile.gettempdir(), "rot_probe.log")
+    # 多行内容：轮转 = 丢前半行、留后半行（与 main._rotate 同逻辑）
+    with open(logp, "w", encoding="utf-8") as f:
+        for i in range(3000):
+            f.write(("%06d " % i) + "y" * 100 + chr(10))
+    size_before = os.path.getsize(logp)
+    with open(logp, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    with open(logp, "w", encoding="utf-8") as f:
+        f.writelines(lines[len(lines) // 2:])
+    check("PF3 轮转后体积约减半", os.path.getsize(logp) < size_before * 0.55,
+          "%d -> %d" % (size_before, os.path.getsize(logp)))
+    os.remove(logp)
+
+    # PF4 回收站：设置开 -> _remove_selected 真文件进回收站（条目移除）
+    from src import win32_layer as _wl
+    tmpf = os.path.join(tempfile.gettempdir(), "pd_recycle_probe.txt")
+    open(tmpf, "w").write("x")
+    st_r = _st("recycle.json")
+    st_r.set_setting("delete_to_recycle_bin", True)
+    st_r._data["layout"] = [
+        {"id": "rf", "type": "app", "col": 0, "row": 0,
+         "app": {"name": "rf", "target": tmpf, "kind": "file"}}]
+    st_r.save()
+    wr = DesktopWindow(st_r)
+    wr._band_guard._timer.stop(); wr._band_guard.shutdown()
+    wr._selected = {"rf"}
+    wr._remove_selected()
+    check("PF4 回收站删除：条目移除 + 真文件消失",
+          st_r.find_entry("rf") is None and not os.path.exists(tmpf))
+    wr.close()
+    # 默认语义：设置关 -> 文件保留
+    tmpf2 = os.path.join(tempfile.gettempdir(), "pd_keep_probe.txt")
+    open(tmpf2, "w").write("x")
+    st_r2 = _st("keep2.json")
+    st_r2._data["layout"] = [
+        {"id": "rk", "type": "app", "col": 0, "row": 0,
+         "app": {"name": "rk", "target": tmpf2, "kind": "file"}}]
+    st_r2.save()
+    wr2 = DesktopWindow(st_r2)
+    wr2._band_guard._timer.stop(); wr2._band_guard.shutdown()
+    wr2._selected = {"rk"}
+    wr2._remove_selected()
+    check("PF4b 默认语义文件保留",
+          st_r2.find_entry("rk") is None and os.path.exists(tmpf2))
+    os.remove(tmpf2)
+    wr2.close()
+
+    # PF5 缓存上限：_cache_put 超限清半
+    dummy = {}
+    for i in range(600):
+        _as._cache_put(dummy, ("k", i), i)
+    check("PF5 缓存上限防膨胀", len(dummy) < 600, str(len(dummy)))
 
     print()
     if failures:

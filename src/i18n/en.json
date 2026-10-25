@@ -364,6 +364,8 @@
   "settings.icons.preview.radius.title": "Corner radius",
   "settings.icons.preview.width.hint": "Border width (1-4 px)",
   "settings.icons.preview.width.title": "Border width",
+  "settings.icons.recycle.hint": "Delete sends real files to the Recycle Bin (native semantics); off = remove from the organized view only",
+  "settings.icons.recycle.title": "Delete to Recycle Bin",
   "settings.icons.shadow.hint": "A soft shadow behind the text keeps it readable on any wallpaper. On by default (as in native Windows)",
   "settings.icons.shadow.title": "Text shadow",
   "settings.icons.shadow_alpha.hint": "Shadow opacity (0-100%). 0 = no shadow",

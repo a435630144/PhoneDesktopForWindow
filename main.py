@@ -43,8 +43,21 @@ def _install_crash_logger():
         d = os.path.join(base, "PhoneDesktop") if base else tempfile.gettempdir()
     log = os.path.join(d, "crash.log")
 
+    def _rotate(path, cap=256 * 1024):
+        """S12：超 256KB 截断重写（保留最新一半内容）。"""
+        try:
+            if os.path.getsize(path) <= cap:
+                return
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(lines[len(lines) // 2:])
+        except Exception:
+            pass
+
     def _hook(etype, exc, tb):
         try:
+            _rotate(log)
             with open(log, "a", encoding="utf-8") as f:
                 f.write("\n=== %s ===\n" % datetime.datetime.now().isoformat())
                 traceback.print_exception(etype, exc, tb, file=f)

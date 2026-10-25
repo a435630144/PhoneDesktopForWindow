@@ -124,6 +124,16 @@ def error_log() -> Path:
 def _log_error(text: str) -> None:
     try:
         error_log().parent.mkdir(parents=True, exist_ok=True)
+        # S12：日志轮转——超 256KB 截断（保留后半）
+        try:
+            log_p = error_log()
+            if log_p.exists() and log_p.stat().st_size > 256 * 1024:
+                with open(log_p, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                with open(log_p, "w", encoding="utf-8") as f:
+                    f.writelines(lines[len(lines) // 2:])
+        except Exception:  # noqa: BLE001
+            pass
         with open(error_log(), "a", encoding="utf-8") as f:
             f.write(text.rstrip() + "\n")
     except Exception:      # noqa: BLE001 —— 日志失败不该影响主流程

@@ -506,8 +506,16 @@ class MonitorWidget(GlassWidget):
         return str((self.entry.get("settings") or {}).get("disk_letter") or "C:")
 
     def _tick(self):
+        # B11/P1-6（2026-10-26）：网络盘断连时 sample 同步阻塞数秒——
+        # 自适应跳采样：上次采样耗时 >500ms 则本轮跳过（保留旧值显示），
+        # 且连续恶化时把数据节拍放宽到 5s，避免每秒卡一次 UI。
+        import time as _time
+        t0 = _time.perf_counter()
         prev = self._snap
         self._snap = sample(self._disk_letter())
+        cost = (_time.perf_counter() - t0) * 1000.0
+        if cost > 500 and self._timer.interval() < 5000:
+            self._timer.setInterval(5000)
         # 帧率档位可能改过——每秒对齐一次（QTimer 重复 set 恒等值无副作用）
         self._anim.setInterval(max(8, round(1000.0 / max(1, self._fps()))))
         self._anim_from = {k: getattr(prev, k) for k in RING_KEYS

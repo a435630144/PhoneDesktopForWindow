@@ -798,13 +798,64 @@ class DesktopWindow(QWidget):
                     return True, HTTRANSPARENT
                 if self._organize_mode():
                     return True, HTCLIENT
-                pad = int(round(14 * self.storage.ui_scale()))
-                for icon in self.icons.values():
-                    r = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
-                    if r.adjusted(-pad, -pad, pad, pad).contains(pt):
-                        return True, HTCLIENT
+                # P4（2026-10-26）：O(1) 格子反算替代全图标遍历——
+                # 图标几何与网格对齐，pos→cell→该格图标的矩形(+pad)判定；
+                # 大文件夹 2×2 覆盖 4 格，逐格反查即可。
+                if self._icon_hit_cell(pt, int(round(
+                        14 * self.storage.ui_scale()))):
+                    return True, HTCLIENT
                 return True, HTTRANSPARENT
         return super().nativeEvent(eventType, message)
+
+    def _icon_hit_cell(self, pt_phys, pad: int) -> bool:
+        """NCHITTEST 快速判定（P4，2026-10-26）：指针是否落在任一桌面
+        图标的矩形+pad 内。O(1)：pos→cell 反算 + 缓存索引查 3×3 邻格
+        （大文件夹 2×2 与 pad 越界都在邻域内；pad < cell 的一半）。
+        空位返回 False（HTTRANSPARENT 透传原生桌面）。
+        """
+        try:
+            pt = self._logical_point(pt_phys)
+            col, row = grid_flow.pos_cell(self.storage, pt.x(), pt.y())
+        except Exception:        # noqa: BLE001
+            return False
+        idx = self._icon_cell_index()
+        if not idx:
+            return False
+        rpp = grid_flow.rows_per_page()
+        page = grid_flow.page_of(row, rpp)
+        for dc in (-1, 0, 1):
+            for dr in (-1, 0, 1):
+                eid = idx.get((col + dc, row + dr))
+                if eid is None:
+                    continue
+                icon = self.icons.get(eid)
+                if icon is None or icon.isHidden():
+                    continue
+                if grid_flow.page_of(row + dr, rpp) != page:
+                    continue
+                try:
+                    r = QRect(icon.mapToGlobal(QPoint(0, 0)), icon.size())
+                except RuntimeError:
+                    continue
+                if r.adjusted(-pad, -pad, pad, pad).contains(pt):
+                    return True
+        return False
+
+    def _icon_cell_index(self) -> dict:
+        """(col,row) -> entry id 的缓存索引（脏标记重建；P4 的 O(1) 底座）。
+        脏标记由 _sync_structure（一切布局变化的汇合点）置位。"""
+        dirty = getattr(self, "_cell_index_dirty", True)
+        idx = getattr(self, "_cell_index_cache", None)
+        if dirty or idx is None:
+            idx = {}
+            for e in self.storage.layout:
+                eid = e.get("id")
+                if eid and eid in self.icons:
+                    idx[(int(e.get("col", 0) or 0),
+                         int(e.get("row", 0) or 0))] = eid
+            self._cell_index_cache = idx
+            self._cell_index_dirty = False
+        return idx
 
     def _logical_point(self, pt):
         """WM_NCHITTEST 的 lParam 是**物理像素**，Qt 几何是**逻辑坐标**。
@@ -1446,7 +1497,10 @@ class DesktopWindow(QWidget):
                 self._widget_layer.apply_flip_frame()
             else:
                 self._widget_layer.settle_flip()
-        self.update()
+        # v14w（P1）：animate=False 路径仍需一次重绘（页面点/玻璃底切换）；
+        # animate=True 的动画期间由子窗口各自重绘（_on_flip_step 已不 update）
+        if not playing:
+            self.update()
 
     # ---------- 轮播翻页帧（v10 B3） ----------
     def _apply_flip_frame(self):
@@ -1472,7 +1526,10 @@ class DesktopWindow(QWidget):
         self._apply_flip_frame()
         if self._widget_layer is not None:
             self._widget_layer.apply_flip_frame()
-        self.update()
+        # v14w（P1）：不再每帧全窗 update——翻页期间本窗口自绘内容（页面
+        # 点/玻璃底）不变，动的是子窗口（图标/组件），它们 move 时各自
+        # 触发局部重绘；全窗重绘 = 420ms 动画期间大半全屏 ARGB 合成白扔。
+        # 折射玻璃底随翻页变化的部分由 LiveLens 的壁纸版本机制覆盖。
 
     def _on_flip_done(self):
         grid_flow.end_flip()
@@ -2021,6 +2078,7 @@ class DesktopWindow(QWidget):
         self._cull_page_icons()      # v6 §4：rescan 等重排后按页显隐
 
     def _sync_structure(self):
+        self._cell_index_dirty = True     # P4：格子索引随布局失效
         """结构同步：storage.layout 与 self.icons 对齐（移除多余、补上
         缺失），再 _sync_icons 让位置变化走弹簧动画。
 
@@ -2221,6 +2279,12 @@ class DesktopWindow(QWidget):
         lo = page * rpp
         free = [(c, r) for r in range(lo, lo + rpp) for c in range(cols)
                 if (c, r) not in blocked]
+        # P2-4（2026-10-26）：目标页空间不足时不再静默少移——托盘提示
+        if len(free) < len(entries):
+            from .tray import notify_via_tray
+            notify_via_tray(
+                "空间不足", "第 %d 页只剩 %d 个空位，%d 个图标未移动"
+                % (page + 1, len(free), len(entries) - len(free)))
         for e, (c, r) in zip(entries, free):
             e["col"], e["row"] = c, r
         self.storage.save()
@@ -4063,9 +4127,11 @@ class DesktopWindow(QWidget):
             return
         dest = str(folders[0])
         added = 0
+        failed = 0
         for u in urls:
             src = u.toLocalFile()
             if not src or not os.path.exists(src):
+                failed += 1
                 continue
             base, ext = os.path.splitext(os.path.basename(src))
             try:
@@ -4076,11 +4142,16 @@ class DesktopWindow(QWidget):
                     shutil.copy2(src, target)
                 added += 1
             except Exception:
-                continue
-        if added:
+                failed += 1
+        # P2-4（2026-10-26）：失败不再静默——托盘提示（成功/部分/全失败）
+        from .tray import notify_via_tray
+        if added and failed:
+            notify_via_tray("部分粘贴成功", "%d 个成功，%d 个失败" % (added, failed))
+        elif added:
             self.rescan_desktop()
-            from .tray import notify_via_tray
             notify_via_tray("已粘贴到桌面", "%d 个项目" % added)
+        elif failed:
+            notify_via_tray("粘贴失败", "%d 个项目无法复制到桌面" % failed)
 
     def _create_from_template(self, tpl):
         """按 ShellNew 模板在桌面新建文件（Office 文档带默认样式）。"""
@@ -4233,6 +4304,28 @@ class DesktopWindow(QWidget):
         self._sync_native_icons()
 
     def _remove_selected(self):
+        # P2-2（v14w）：Delete 语义可选——开启「删除进回收站」时，真实
+        # 文件条目（kind=file）送回收站（SHFileOperationW），应用快捷
+        # 方式/虚拟条目仍只移除条目。默认关 = 原保守语义。
+        recycle_on = False
+        try:
+            recycle_on = bool(self.storage.get_setting("delete_to_recycle_bin"))
+        except Exception:        # noqa: BLE001
+            pass
+        recycle_targets = []
+        if recycle_on:
+            from . import appsource as _as
+            for eid in list(self._selected):
+                e = self.storage.find_entry(eid)
+                if e and e.get("type") == "app":
+                    p = _as.reveal_path_for(e.get("app", {}))
+                    if p and os.path.isfile(p):
+                        recycle_targets.append(p)
+        if recycle_targets:
+            from . import win32_layer
+            if win32_layer.recycle_paths(recycle_targets):
+                from .tray import notify_via_tray
+                notify_via_tray("已移入回收站", "%d 个文件" % len(recycle_targets))
         for eid in list(self._selected):
             self.storage.remove_entry(eid)
             self._remove_icon(eid)

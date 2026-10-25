@@ -508,7 +508,19 @@ class DesktopPanel(GlassWidget):
 
     # ---------- 搜索 ----------
     def _on_search(self, text):
-        text = text.strip()
+        # B12/P1-6（2026-10-26）：每键直查会连打 all_apps + scan_desktop_files
+        # （OneDrive 桌面下明显卡顿）——200ms 防抖合并连续输入
+        if not hasattr(self, "_search_debounce"):
+            from PySide6.QtCore import QTimer
+            self._search_debounce = QTimer(self)
+            self._search_debounce.setSingleShot(True)
+            self._search_debounce.setInterval(200)
+            self._search_debounce.timeout.connect(self._do_search)
+        self._pending_search = text
+        self._search_debounce.start()
+
+    def _do_search(self):
+        text = (getattr(self, "_pending_search", "") or "").strip()
         self.list_results.clear()
         if not text:
             self.list_results.hide()

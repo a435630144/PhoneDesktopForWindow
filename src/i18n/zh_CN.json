@@ -364,6 +364,8 @@
   "settings.icons.preview.radius.title": "圆角",
   "settings.icons.preview.width.hint": "边框粗细（1~4 像素）",
   "settings.icons.preview.width.title": "边框粗细",
+  "settings.icons.recycle.hint": "按 Delete 时把真实文件移入回收站（原生态语义）；关闭则仅从整理桌面移除，文件保留",
+  "settings.icons.recycle.title": "删除进回收站",
   "settings.icons.shadow.hint": "文字背后一层柔和阴影，保证任意壁纸上可读。默认开启（Windows 原生即有）",
   "settings.icons.shadow.title": "文字阴影",
   "settings.icons.shadow_alpha.hint": "阴影浓度（0~100%）。0 = 关闭阴影效果",

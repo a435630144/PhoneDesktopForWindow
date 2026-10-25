@@ -754,3 +754,45 @@ def restore_native_icons():
     SW_SHOW 对已可见窗口无害，幂等安全。
     """
     set_native_icons_visible(True)
+
+
+# ---------------------------------------------------------------- 回收站删除（v14w）
+
+def recycle_paths(paths) -> bool:
+    """把本地路径送进回收站（SHFileOperationW，FOF_ALLOWUNDO）。
+
+    「删除进回收站」语义的可选实现（设置 delete_to_recycle_bin，默认关
+    保持「从整理桌面移除」的保守语义）。任一失败返回 False——调用方
+    回退为仅移除条目。
+    """
+    import ctypes
+    from ctypes import wintypes as wt
+
+    paths = [str(p) for p in (paths or []) if p]
+    if not paths:
+        return False
+    # 双 NUL 结尾的多串列表
+    nul = chr(0)
+    buf = "".join(p + nul for p in paths) + nul
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wt.HWND),
+                    ("wFunc", ctypes.c_uint),
+                    ("pFrom", ctypes.c_wchar_p),
+                    ("pTo", ctypes.c_wchar_p),
+                    ("fFlags", ctypes.c_ushort),
+                    ("fAnyOperationsAborted", wt.BOOL),
+                    ("hNameMappings", ctypes.c_void_p),
+                    ("lpszProgressTitle", ctypes.c_wchar_p)]
+
+    FO_DELETE = 3
+    FOF_ALLOWUNDO = 0x40
+    FOF_NOCONFIRMATION = 0x10
+    FOF_SILENT = 0x4
+    op = SHFILEOPSTRUCTW()
+    op.hwnd = None
+    op.wFunc = FO_DELETE
+    op.pFrom = buf
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+    r = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    return r == 0 and not op.fAnyOperationsAborted

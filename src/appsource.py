@@ -385,6 +385,21 @@ def launch(app: dict):
 _ICON_PROVIDER = QFileIconProvider()
 _ICON_CACHE = {}
 _PIXMAP_CACHE = {}
+_CACHE_MAX = 512               # P2-5：无上限缓存在多尺寸/多壁纸场景会膨胀
+
+
+def _cache_put(cache: dict, key, value) -> None:
+    """插入 + 简易防膨胀（超限清半——键空间有限，够用且无锁）。"""
+    if len(cache) >= _CACHE_MAX:
+        for k in list(cache.keys())[: len(cache) // 2]:
+            cache.pop(k, None)
+    cache[key] = value
+# 二次缩放缓存（P2，2026-10-26）：draw_icon 对缓存 pixmap 做 contain 缩放
+# 时（目标逻辑尺寸≠源逻辑尺寸），hover/脉冲动画每帧都会重跑
+# SmoothTransformation。按（源 pixmap cacheKey, 目标尺寸, dpr）缓存结果
+# ——pixmap 实例来自 _PIXMAP_CACHE（稳定），cacheKey 即稳定身份。
+_RSCALE_CACHE = {}
+_RSCALE_CACHE_MAX = 1024
 
 # `icon_path` 指向图片文件时直接加载（见 `_qicon_for`）。含 SVG 是因为
 # Windows 11 的 shell 能认，Qt 侧只有装了 imageformats 插件才认——认不了
@@ -508,7 +523,7 @@ def _qicon_for(app: dict) -> QIcon:
     if path.lower().endswith(_IMAGE_SUFFIXES):
         key = (path,)
         if key not in _ICON_CACHE:
-            _ICON_CACHE[key] = QIcon(path)
+            _cache_put(_ICON_CACHE, key, QIcon(path))
         if not _ICON_CACHE[key].isNull():
             return _ICON_CACHE[key]
         # 图坏了/文件不在：往下走 shell 分支，至少还能拿到文件类型图标
@@ -539,7 +554,7 @@ def _qicon_for(app: dict) -> QIcon:
         icon = _ICON_PROVIDER.icon(QFileInfo(path))
     except Exception:
         icon = QIcon()
-    _ICON_CACHE[key] = icon
+    _cache_put(_ICON_CACHE, key, icon)
     return icon
 
 
@@ -605,7 +620,7 @@ def icon_pixmap(app: dict, logical_size: int, dpr: float = 1.0) -> QPixmap:
         pm.setDevicePixelRatio(dpr)
     # v6e（用户："左下角好像有快捷方式的箭头，不需要"）：不再自绘任何徽标。
     # 图标就是图标本身——桌面视觉统一，也省掉一层绘制。
-    _PIXMAP_CACHE[key] = pm
+    _cache_put(_PIXMAP_CACHE, key, pm)
     return pm
 
 
@@ -636,10 +651,19 @@ def draw_icon(painter, app: dict, rect, dpr: float = 1.0) -> int:
     scale = min(w / lw, h / lh)
     dw, dh = max(1, int(round(lw * scale))), max(1, int(round(lh * scale)))
     if (dw, dh) != (int(round(lw)), int(round(lh))):
-        pm = pm.scaled(max(1, int(round(dw * dpr))),
-                       max(1, int(round(dh * dpr))),
-                       Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-        pm.setDevicePixelRatio(dpr)
+        # P2（2026-10-26）：按最终尺寸缓存二次缩放结果——动画帧零缩放开销
+        rkey = (pm.cacheKey(), dw, dh, round(dpr, 2))
+        cached = _RSCALE_CACHE.get(rkey)
+        if cached is None:
+            pm = pm.scaled(max(1, int(round(dw * dpr))),
+                           max(1, int(round(dh * dpr))),
+                           Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            pm.setDevicePixelRatio(dpr)
+            if len(_RSCALE_CACHE) >= _RSCALE_CACHE_MAX:
+                _RSCALE_CACHE.clear()      # 简单防膨胀（键空间本身有限）
+            _RSCALE_CACHE[rkey] = pm
+        else:
+            pm = cached
     x = int(round(rect.x() + (w - dw) / 2.0))
     y = int(round(rect.y() + (h - dh) / 2.0))
     painter.drawPixmap(x, y, pm)

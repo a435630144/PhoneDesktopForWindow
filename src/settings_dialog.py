@@ -1623,6 +1623,16 @@ class SettingsDialog(QDialog):
         self._row(c2, card2, i18n.T("settings.icons.preview.radius.title"),
                   self.sp_cell_preview_radius,
                   i18n.T("settings.icons.preview.radius.hint"))
+
+        # v14w：Delete 语义可选（进回收站 = 原生桌面同款；默认保持
+        # 「从整理桌面移除」的保守语义）
+        self.chk_recycle = Switch()
+        self.chk_recycle.setChecked(
+            bool(self.storage.get_setting("delete_to_recycle_bin")))
+        self.chk_recycle.toggled.connect(self._apply_recycle_delete)
+        self._row(c2, card2, i18n.T("settings.icons.recycle.title"),
+                  self.chk_recycle,
+                  i18n.T("settings.icons.recycle.hint"))
         lay.addWidget(card2)
 
         # ---- v14j 反馈：hover 高亮与动画自定义（可关） ----
@@ -2035,6 +2045,10 @@ class SettingsDialog(QDialog):
         self.lbl_label_font.setText("%d%%" % v)
         self.storage.set_setting("label_font_scale", int(v))
         self._label_style_changed()
+
+    def _apply_recycle_delete(self, on):
+        """Delete 语义开关（v14w）：写设置即可，_remove_selected 现读。"""
+        self.storage.set_setting("delete_to_recycle_bin", bool(on))
 
     def _reset_label_text(self):
         """标签文字回出厂（= Windows 原生：白字 + 柔和黑阴影，无描边）。"""
