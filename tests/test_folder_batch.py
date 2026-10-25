@@ -289,12 +289,14 @@ def test_popup(app):
     icon = w.icons.get("f")
     check("G4b 文件夹图标已生成", icon is not None)
     if icon is not None:
+        # v14u：「文件夹大小」子菜单移入弹窗空白右键（内部尺寸布局）；
+        # 瓷砖右键换成「放大（大文件夹）」/「缩小」per-folder 切换
         texts = menu_texts(icon._build_context_menu())
         joined = " | ".join(texts)
-        check("G4b 文件夹右键有「文件夹大小」", "文件夹大小" in joined, joined)
-        check("G4b 尺寸子菜单含 2×2 / 3×2 / 3×3",
-              "2 × 2" in joined and "3 × 2" in joined and "3 × 3" in joined,
-              joined)
+        check("G4b 文件夹右键有「放大（大文件夹）」",
+              "放大" in joined, joined)
+        check("G4b 右键不再有「文件夹大小」子菜单",
+              "文件夹大小" not in joined, joined)
     w.close()
 
 

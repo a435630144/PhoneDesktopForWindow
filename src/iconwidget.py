@@ -159,6 +159,7 @@ class AppIcon(QWidget):
     activated = Signal(dict)            # 双击启动
     clicked = Signal(str)               # 单击选中（entry id）
     folderClicked = Signal(str)         # 单击文件夹（entry id）
+    bigToggleRequested = Signal(str, bool)   # 放大/缩小（id, 目标态）v14u
     folderHoverOpened = Signal(str)     # 悬停自动展开（v14：与点击分开，
                                         # 悬停展开的弹窗鼠标离开后自动关）
     mergeRequested = Signal(str, str)   # 拖拽合并：dragged_payload, target_entry_id
@@ -1815,18 +1816,13 @@ class AppIcon(QWidget):
             menu.addAction("移出文件夹", self._remove_from_folder)
         elif self.is_folder:
             menu.addAction("打开", self._open_folder)
-            # 反馈 14：单个文件夹的展开尺寸（上限；实际按成员数收缩）
-            from . import folder_layout
-            size_menu = menu.addMenu("文件夹大小")
-            self._ctx_submenus.append(size_menu)
-            cur = folder_layout.frame_pair(self.entry.get("frame"))
-            for c, r in folder_layout.FRAME_PRESETS:
-                act = size_menu.addAction(folder_layout.label(c, r))
-                act.setCheckable(True)
-                act.setChecked((c, r) == cur)
-                act.triggered.connect(
-                    lambda _c=False, c=c, r=r:
-                    self.frameRequested.emit(self.entry["id"], c, r))
+            # v14u：大文件夹 per-folder（entry["big"]）——小 → 「放大」、
+            # 大 → 「缩小」；原「文件夹大小」子菜单移入弹窗空白右键
+            # （内部尺寸布局）。
+            if self._big:
+                menu.addAction("缩小（普通文件夹）", self._toggle_big)
+            else:
+                menu.addAction("放大（大文件夹）", self._toggle_big)
             menu.addAction("解散文件夹", self._dissolve)
             menu.addAction("从整理桌面移除", self._remove_self)
         elif self.is_file:
@@ -1990,6 +1986,11 @@ class AppIcon(QWidget):
 
     def _open_folder(self):
         self.folderClicked.emit(self.entry["id"])
+
+    def _toggle_big(self):
+        """放大 / 缩小（v14u）：发 bigToggleRequested（id, 目标态）。"""
+        self.bigToggleRequested.emit(self.entry["id"],
+                                     not bool(self.entry.get("big")))
 
     def _dissolve(self):
         self.dissolveRequested.emit(self.entry["id"])

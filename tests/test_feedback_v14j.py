@@ -653,9 +653,9 @@ def main(app):
     # ---------- BG v14t：大文件夹（2×2 跨格，内部 3×3 直显） ----------
     from src import grid_flow as _gf
     stb = _st("big.json")
-    stb.set_setting("folder_big", True)
     stb._data["layout"] = [
         {"id": "fb", "type": "folder", "col": 0, "row": 0, "name": "B",
+         "big": True,
          "app": {"name": "B", "target": "B", "kind": "app"},
          "apps": [{"id": f"m{i}", "name": f"m{i}", "target": f"t{i}",
                    "kind": "app"} for i in range(11)]},
@@ -663,9 +663,9 @@ def main(app):
          "app": {"name": "x", "target": "x", "kind": "app"}},
     ]
     stb.save()
-    check("BG folder_big 判定", _gf.folder_big(stb) is True)
-    check("BGb is_big_folder（仅文件夹）",
+    check("BG is_big_folder per-entry（entry.big=True）",
           _gf.is_big_folder(stb, stb.find_entry("fb")) is True
+          and _gf.is_big_folder(stb, {"type": "folder"}) is False
           and _gf.is_big_folder(stb, {"type": "app"}) is False)
     extra = _gf.big_extra_cells(stb.find_entry("fb"), 10)
     check("BGc 派生格 = 右/下/右下",
@@ -696,14 +696,31 @@ def main(app):
           and big_icon._member_at(QPoint(5, 5)) == -1)
     big_icon.deleteLater()
 
-    # 设置页：大文件夹开关写键
+    # 设置页：全局大文件夹开关退役（per-folder 右键切换）
     from src.settings_dialog import SettingsDialog as _SD4
     st_bg2 = _st("bigdlg.json")
     dlg_bg = _SD4(type("W4", (), {"attached": False})(), st_bg2, None)
-    check("BGg 文件夹页有大文件夹开关", hasattr(dlg_bg, "chk_folder_big"))
-    dlg_bg.chk_folder_big.setChecked(True)
-    check("BGh 开关写 folder_big", st_bg2.get_setting("folder_big") is True)
+    check("BGg 全局大文件夹开关已退役（per-folder）",
+          not hasattr(dlg_bg, "chk_folder_big"))
     dlg_bg.deleteLater()
+
+    # 桌面 handler：放大/缩小写 entry["big"] + 重建
+    stb3 = _st("big3.json")
+    stb3._data["layout"] = [
+        {"id": "fb", "type": "folder", "col": 0, "row": 0, "name": "B",
+         "app": {"name": "B", "target": "B", "kind": "app"},
+         "apps": [{"id": "m", "name": "m", "target": "m", "kind": "app"}]},
+    ]
+    stb3.save()
+    w3 = DesktopWindow(stb3)
+    w3._band_guard._timer.stop(); w3._band_guard.shutdown()
+    w3._on_folder_big_toggle("fb", True)
+    check("BGh 放大 -> entry.big=True",
+          stb3.find_entry("fb").get("big") is True)
+    w3._on_folder_big_toggle("fb", False)
+    check("BGh 缩小 -> entry.big=False",
+          stb3.find_entry("fb").get("big") is False)
+    w3.close()
 
     # 布局集成：pack 后 2×2 块不被其它条目压
     stb2 = _st("bigpack.json")
@@ -722,6 +739,36 @@ def main(app):
                   for e in stb2._data["layout"] if e["id"] != "fb")
           and (1, 0) not in [(e["col"], e["row"]) for e in stb2._data["layout"]
                              if e["id"] != "fb"])
+
+
+    # ---------- S9 v14u：弹窗空白右键 = 内部尺寸布局 ----------
+    st_c = _st("ctx.json")
+    st_c._data["layout"] = [
+        {"id": "fc", "type": "folder", "col": 0, "row": 0, "name": "C",
+         "app": {"name": "C", "target": "C", "kind": "app"},
+         "frame": [3, 3],
+         "apps": [{"id": "m", "name": "m", "target": "m", "kind": "app"}]},
+    ]
+    st_c.save()
+    pop_c = fp.FolderPopup(st_c, st_c.find_entry("fc"), anchor_rect=None)
+    got_frame = []
+    pop_c.frameRequested.connect(
+        lambda eid, c, r: got_frame.append((eid, c, r)))
+    menu = pop_c._build_size_menu()
+    texts = [a.text() for a in menu.actions()]
+    check("S9 空白右键 = 内部尺寸布局菜单（5 预设）", len(texts) == 5,
+          str(texts))
+    check("S9b 当前 3×3 勾选", any(a.isChecked() for a in menu.actions()))
+    for a in menu.actions():
+        if "2" in a.text() and "×" in a.text() and "2 × 2" == a.text():
+            a.trigger()
+            break
+    app.processEvents()
+    check("S9c 选择写 frameRequested（3×3 → 2×2）",
+          got_frame and got_frame[0][1] == 2 and got_frame[0][2] == 2,
+          str(got_frame))
+    menu.close()
+    pop_c.close()
 
     print()
     if failures:

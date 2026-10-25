@@ -48,7 +48,8 @@ from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
                             QTimer, Qt, Signal, Property)
 from PySide6.QtGui import (QColor, QCursor, QFont, QGuiApplication, QPainter,
                            QPen, QPixmap)
-from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
+from PySide6.QtWidgets import (QApplication, QLineEdit, QMenu,
+                               QWidget)
 
 from . import appsource
 from . import effects
@@ -382,6 +383,7 @@ class FolderPopup(QWidget):
     launchApp = Signal(dict)
     extractRequested = Signal(str)   # payload "M:fid:idx"（M: 标记与含冒号的条目 id 消歧）
     removeMember = Signal(str)       # payload "M:fid:idx"
+    frameRequested = Signal(str, int, int)   # 内部尺寸布局（v14u）
     memberAdded = Signal(str)        # M5：桌面图标加入文件夹（entry id）
     renamed = Signal()               # M5：重命名提交（源图标刷新标签/tooltip）
     tintChanged = Signal()           # M5：色板换色（源图标刷新渐变）
@@ -752,6 +754,31 @@ class FolderPopup(QWidget):
             e.accept()
             return
         e.ignore()
+
+    def contextMenuEvent(self, e):
+        """空白处右键 = 当前文件夹的**内部尺寸布局**（v14u）。
+
+        原 1×1 瓷砖右键的「文件夹大小」子菜单移到这里（功能集成到展开
+        之后）：设置的是弹窗内部布局上限（FRAME_PRESETS，成员少时按
+        实际数量收缩）。点在成员图标上时不拦（成员自己的菜单优先）。
+        """
+        self._build_size_menu().exec(e.globalPos())
+
+    def _build_size_menu(self):
+        """内部尺寸布局菜单（拆出便于单测，与 AppIcon._build_context_menu
+        同款模式）。"""
+        from . import folder_layout
+        menu = QMenu(self)
+        menu.setStyleSheet(theme.MENU_QSS)
+        cur = folder_layout.frame_pair(self.entry.get("frame"))
+        for c, r in folder_layout.FRAME_PRESETS:
+            act = menu.addAction(folder_layout.label(c, r))
+            act.setCheckable(True)
+            act.setChecked((c, r) == cur)
+            act.triggered.connect(
+                lambda _c=False, c=c, r=r:
+                self.frameRequested.emit(self.entry["id"], c, r))
+        return menu
 
     # ---------- 开合动效 ----------
     def _open_animate(self):

@@ -1876,6 +1876,7 @@ class DesktopWindow(QWidget):
         icon.removeRequested.connect(self._on_remove_entry)
         icon.dissolveRequested.connect(self._on_dissolve)
         icon.frameRequested.connect(self._on_folder_frame)
+        icon.bigToggleRequested.connect(self._on_folder_big_toggle)
         icon.iconScaleChanged.connect(self._on_icon_scale)
         icon.openLocation.connect(self._on_open_location)
         icon.dragStarted.connect(self._on_drag_started)
@@ -3292,6 +3293,8 @@ class DesktopWindow(QWidget):
         popup.extractRequested.connect(self._on_extract)
         popup.removeMember.connect(self._on_remove_member)
         popup.memberAdded.connect(self._on_popup_member_added)
+        popup.frameRequested.connect(
+            lambda eid, c, r: self._on_folder_frame(eid, c, r))
         popup.renamed.connect(lambda: self._refresh_folder_icon(entry_id))
         popup.tintChanged.connect(lambda: self._refresh_folder_icon(entry_id))
         popup.closed.connect(self._on_popup_closed)
@@ -3520,6 +3523,19 @@ class DesktopWindow(QWidget):
         """设置页改了「文件夹默认大小」后让已打开的弹窗按新上限重排。"""
         if self._popup is not None:
             self._popup.refresh()
+
+    def _on_folder_big_toggle(self, entry_id, big):
+        """右键「放大/缩小」（v14u）：写 entry["big"] 并重建网格。
+
+        大文件夹占 2×2——布局要重排（放不下会换行），rebuild 是最稳的
+        路径（_refresh_grid 走 refresh_grid → 重建图标 + 重铺）。
+        """
+        entry = self.storage.find_entry(entry_id)
+        if not entry or entry.get("type") != "folder":
+            return
+        entry["big"] = bool(big)
+        self.storage.save()
+        self.rebuild(stagger=False)
 
     def _on_folder_frame(self, entry_id, cols, rows):
         """右键「文件夹大小」（反馈 14）：写 entry["frame"] 并立即重排弹窗。

@@ -53,23 +53,16 @@ def reading_order(entries: Iterable[dict], cols: int) -> List[dict]:
     return sorted(entries, key=lambda e: (int(e.get("row", 0)), int(e.get("col", 0))))
 
 
-def folder_big(storage) -> bool:
-    """大文件夹模式（v14t）：开 = 所有文件夹瓷砖 2×2 跨格、内部 3×3 直显。"""
-    try:
-        return bool(storage.get_setting("folder_big"))
-    except Exception:        # noqa: BLE001
-        return False
-
-
 def is_big_folder(storage, entry) -> bool:
-    """该条目是否按大文件夹渲染（文件夹 + 全局开关；无界模式也算——
-    只是不占格）。"""
+    """该条目是否按大文件夹渲染（v14u 改 per-entry：entry["big"]=True）。
+
+    storage 形参保留（调用点众多；判定本身只看条目）。"""
     try:
         if str(entry.get("type") or "") != "folder":
             return False
     except Exception:        # noqa: BLE001
         return False
-    return folder_big(storage)
+    return bool(entry.get("big"))
 
 
 def big_extra_cells(entry, cols: int):
@@ -88,8 +81,6 @@ def big_extra_cells(entry, cols: int):
 def folder_extra_cells(storage) -> set:
     """全部大文件夹的额外占格集合（网格模式；无界模式不占格）。"""
     out = set()
-    if not folder_big(storage):
-        return out
     cols = max(1, int(getattr(storage, "columns", 0) or 0))
     for e in storage.layout:
         if str(e.get("type") or "") != "folder":
@@ -110,7 +101,7 @@ def occupied_cells(entries: Iterable[dict], cols: int,
     seen = set()
     for e in entries:
         seen.add(_cell_of(e))
-    if storage is not None and folder_big(storage) and not free_mode(storage):
+    if storage is not None and not free_mode(storage):
         cols_i = max(1, int(cols))
         for e in entries:
             if str(e.get("type") or "") != "folder":

@@ -120,7 +120,6 @@ DEFAULT_SETTINGS = {
     "label_outline_color": "#000000",
     "label_outline_width": 1,       # 描边粗细 1~3
     "label_font_scale": 100,       # 图标字号缩放 %（70~140，v14q）
-    "folder_big": False,           # 大文件夹模式（2×2 瓷砖直显成员，v14t）
     # v14j：图标悬停高亮与动画（读取唯一入口 label_style.hover_style）
     "icon_hover_color": "",         # "" = 跟内置白（theme.HOVER_BORDER）
     "icon_hover_fill": 8,           # 悬停底填充 %（0~40）

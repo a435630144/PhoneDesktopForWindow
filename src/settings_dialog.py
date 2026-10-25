@@ -2324,24 +2324,12 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.layout.folder_hover.hint"))
         lay.addWidget(card)
 
-        card, c = self._card(body, i18n.T("settings.folders.card.big"))
-        self.chk_folder_big = Switch()
-        self.chk_folder_big.setChecked(grid_flow.folder_big(self.storage))
-        self.chk_folder_big.toggled.connect(self._apply_folder_big)
-        self._row(c, card, i18n.T("settings.folders.big.title"),
-                  self.chk_folder_big,
-                  i18n.T("settings.folders.big.hint"))
+        # v14u：大文件夹改 per-folder（右键「放大/缩小」），全局开关退役；
+        # 内部尺寸布局在弹窗空白右键设置。本页保留展开行为等文件夹设置。
         note = QLabel(i18n.T("settings.folders.big.note"))
         note.setObjectName("rowHint")
         note.setWordWrap(True)
-        c.addWidget(note)
-        lay.addWidget(card)
-
-    def _apply_folder_big(self, on):
-        """大文件夹开关（v14t）：布局变化 → 全量重建图标。"""
-        self.storage.set_setting("folder_big", bool(on))
-        self._flush_storage()
-        self._refresh_grid()
+        lay.addWidget(note)
 
     def _page_mode(self, body, lay):
         # ---- v9 V4-6 交互方式（Windows 习惯 / 手机习惯） ----
