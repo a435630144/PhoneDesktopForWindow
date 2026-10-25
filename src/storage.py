@@ -119,6 +119,12 @@ DEFAULT_SETTINGS = {
     "label_outline": False,         # 文字描边（Windows 原生无描边）
     "label_outline_color": "#000000",
     "label_outline_width": 1,       # 描边粗细 1~3
+    # v14j：图标悬停高亮与动画（读取唯一入口 label_style.hover_style）
+    "icon_hover_color": "",         # "" = 跟内置白（theme.HOVER_BORDER）
+    "icon_hover_fill": 8,           # 悬停底填充 %（0~40）
+    "icon_hover_enabled": True,     # 关 = 悬停不画高亮底/边
+    "icon_hover_scale": 104,        # 悬停放大 %（100 = 关闭放大动画）
+    "icon_hover_anim": 140,         # 悬停动画时长 ms（80~400）
     # 反馈 13：拖动落点预览框（原硬编码红框 + 8% 红底）。空色 = 跟随主题。
     "cell_preview_color": "",       # "" = theme.DANGER
     "cell_preview_fill": 8,         # 填充浓度 %（0~40）

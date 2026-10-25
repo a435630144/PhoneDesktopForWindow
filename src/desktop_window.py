@@ -1250,6 +1250,15 @@ class DesktopWindow(QWidget):
         """当前标签样式（唯一入口：rebuild / _add_icon / 设置热更新都读它）。"""
         return label_style.label_style(self.storage)
 
+    def apply_hover_style(self):
+        """hover 高亮/动画设置变更（v14j）：全图标丢缓存重绘。"""
+        for icon in list(self.icons.values()):
+            try:
+                icon.invalidate_hover_style()
+            except (RuntimeError, AttributeError):
+                pass
+        self.update()
+
     def apply_label_style(self):
         """设置里改完文字样式：把新样式推进每个图标并重绘（不重建部件）。
 

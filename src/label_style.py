@@ -88,6 +88,21 @@ class PreviewStyle(NamedTuple):
     enabled: bool = True         # False = 拖动时不画落点指示框
 
 
+class HoverStyle(NamedTuple):
+    """图标 hover 高亮样式（v14j 反馈：可自定义、可关）。
+
+    `AppIcon.paintEvent` 的 `_hover` 分支唯一数据源；颜色 `""` = 跟随
+    theme.HOVER_BORDER / theme.HOVER（原内置白）。动画幅度 100 = 关闭
+    放大（hover 仍画高亮底，只是不缩放）。
+    """
+
+    color: QColor                # "" -> theme.HOVER_BORDER 同源白
+    fill_alpha: float            # 0~1（默认 20/255）
+    enabled: bool = True         # False = hover 不画高亮底/边
+    scale_pct: int = 104         # hover 放大幅度 %（100 = 不放大）
+    anim_ms: int = 140           # hover 动画时长 ms（80~400）
+
+
 # ---------------------------------------------------------------- 读取助手
 
 def _color(raw, fallback: str) -> QColor:
@@ -191,6 +206,31 @@ def apply_preview_preset(storage, name: str) -> bool:
         return False
     storage.set_setting("cell_preview_color", c.name())
     return True
+
+
+# hover 高亮（v14j）
+HOVER_SCALE_MIN, HOVER_SCALE_MAX = 100, 112
+HOVER_ANIM_MIN, HOVER_ANIM_MAX = 80, 400
+DEFAULT_HOVER_SCALE = 104            # AppIcon enterEvent 的原字面量
+DEFAULT_HOVER_ANIM = 140
+
+
+def hover_style(storage) -> HoverStyle:
+    """按当前设置求图标 hover 高亮样式（唯一入口）。"""
+    if storage is None:
+        return HoverStyle(color=QColor(255, 255, 255, 36),
+                          fill_alpha=20 / 255.0,
+                          scale_pct=DEFAULT_HOVER_SCALE,
+                          anim_ms=DEFAULT_HOVER_ANIM)
+    raw = str(storage.get_setting("icon_hover_color") or "").strip()
+    return HoverStyle(
+        color=_color(raw, QColor(255, 255, 255, 36).name()),
+        fill_alpha=_int(storage, "icon_hover_fill", 8, 0, 40) / 100.0,
+        enabled=_flag(storage, "icon_hover_enabled", True),
+        scale_pct=_int(storage, "icon_hover_scale", DEFAULT_HOVER_SCALE,
+                       HOVER_SCALE_MIN, HOVER_SCALE_MAX),
+        anim_ms=_int(storage, "icon_hover_anim", DEFAULT_HOVER_ANIM,
+                     HOVER_ANIM_MIN, HOVER_ANIM_MAX))
 
 
 # ---------------------------------------------------------------- 绘制助手

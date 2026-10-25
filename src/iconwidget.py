@@ -526,9 +526,19 @@ class AppIcon(QWidget):
             p.setBrush(theme.ACCENT_SOFT)
             p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
         elif self._hover:
-            p.setPen(QPen(theme.HOVER_BORDER, 1))
-            p.setBrush(theme.HOVER)
-            p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2), theme.RADIUS_ITEM, theme.RADIUS_ITEM)
+            # v14j 反馈：hover 高亮样式可自定义可关（label_style.hover_style）
+            cfg = self._hover_cfg()
+            if cfg.enabled:
+                fill = QColor(255, 255, 255, max(0, min(255,
+                        int(round(cfg.fill_alpha * 255)))))
+                border = QColor(cfg.color)
+                if not str(self._storage() and self._storage().get_setting(
+                        "icon_hover_color") or "").strip():
+                    border = theme.HOVER_BORDER   # 未自定义 -> 跟内置白
+                p.setPen(QPen(border, 1))
+                p.setBrush(fill)
+                p.drawRoundedRect(self.rect().adjusted(2, 2, -2, -2),
+                                  theme.RADIUS_ITEM, theme.RADIUS_ITEM)
 
         self._paint_icon_only(p, dpr)
         if not self._no_label:
@@ -960,6 +970,11 @@ class AppIcon(QWidget):
     def set_label_style(self, style):
         """热更新标签文字样式（v14 反馈 3：设置里改完立刻重画，不重建图标）。"""
         self._label_style = style
+        self.update()
+
+    def invalidate_hover_style(self):
+        """hover 样式设置变了（v14j）：丢弃缓存，下次 enter/重绘重取。"""
+        self._hover_style_cache = None
         self.update()
 
     def _paint_select_badge(self, p):
@@ -1477,11 +1492,23 @@ class AppIcon(QWidget):
             self.pulse()   # 启动反馈脉冲
             self.activated.emit(self.entry.get("app", {}))
 
+    def _hover_cfg(self):
+        """hover 样式与动画参数（懒取 + 热更新用）。"""
+        cfg = getattr(self, "_hover_style_cache", None)
+        if cfg is None:
+            from . import label_style as _lsm
+            cfg = _lsm.hover_style(self._storage())
+            self._hover_style_cache = cfg
+        return cfg
+
     def enterEvent(self, e):
         self._hover = True
-        # 悬停轻放大 1.04：临界阻尼弹簧，可打断（快速划过时从当前值起播）
-        self._animate(b"hover_scale", self._hover_scale, 1.04, 140,
-                      effects.spring_curve(1.0, 140))
+        cfg = self._hover_cfg()
+        # v14j 反馈：hover 放大幅度/时长可配置；100% = 关闭放大动画
+        target = cfg.scale_pct / 100.0
+        if abs(target - 1.0) > 0.001:
+            self._animate(b"hover_scale", self._hover_scale, target,
+                          cfg.anim_ms, effects.spring_curve(1.0, cfg.anim_ms))
         # v14 反馈 1：文件夹悬停自动展开（手机文件夹的"瞄一眼"语义）
         if self._hover_expand_ok():
             self._hover_open.start()
@@ -1490,8 +1517,9 @@ class AppIcon(QWidget):
     def leaveEvent(self, e):
         self._hover = False
         self._hover_open.stop()
-        self._animate(b"hover_scale", self._hover_scale, 1.0, 160,
-                      effects.spring_curve(1.0, 160))
+        cfg = self._hover_cfg()
+        self._animate(b"hover_scale", self._hover_scale, 1.0,
+                      max(80, cfg.anim_ms), effects.spring_curve(1.0, 160))
         self.update()
 
     def _hover_expand_ok(self) -> bool:

@@ -28,6 +28,7 @@ from . import dock
 from . import grid_flow
 from . import i18n
 from . import interaction
+from . import label_style
 from . import liquid_glass
 from . import page_rules
 from . import updater
@@ -1600,6 +1601,92 @@ class SettingsDialog(QDialog):
                   self.sp_cell_preview_radius,
                   i18n.T("settings.icons.preview.radius.hint"))
         lay.addWidget(card2)
+
+        # ---- v14j 反馈：hover 高亮与动画自定义（可关） ----
+        card3, c3 = self._card(body, i18n.T("settings.icons.card.hover"),
+                               reset_fn=self._reset_icon_hover)
+        self.chk_hover_enabled = Switch()
+        self.chk_hover_enabled.setChecked(
+            _ls.hover_style(self.storage).enabled)
+        self.chk_hover_enabled.toggled.connect(
+            self._apply_icon_hover_enabled)
+        self._row(c3, card3, i18n.T("settings.icons.hover.enabled.title"),
+                  self.chk_hover_enabled,
+                  i18n.T("settings.icons.hover.enabled.hint"))
+
+        self._icon_hover_color = str(
+            self.storage.get_setting("icon_hover_color") or "")
+        self.btn_hover_color = QPushButton()
+        self.btn_hover_color.setFixedWidth(120)
+        self.btn_hover_color.setCursor(Qt.PointingHandCursor)
+        self.btn_hover_color.clicked.connect(self._pick_hover_color)
+        self._sync_hover_color_btn()
+        self._row(c3, card3, i18n.T("settings.icons.hover.color.title"),
+                  self.btn_hover_color,
+                  i18n.T("settings.icons.hover.color.hint"))
+
+        self.sld_hover_fill = QSlider(Qt.Horizontal)
+        self.sld_hover_fill.setRange(0, 40)
+        self.sld_hover_fill.setFixedWidth(150)
+        self.sld_hover_fill.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_hover_fill.setValue(int(
+            self.storage.get_setting("icon_hover_fill") or 8))
+        self.lbl_hover_fill = QLabel("%d%%" % self.sld_hover_fill.value())
+        self.lbl_hover_fill.setObjectName("rowHint")
+        self.lbl_hover_fill.setFixedWidth(40)
+        self.sld_hover_fill.valueChanged.connect(self._apply_hover_fill)
+        self.sld_hover_fill.sliderReleased.connect(self._flush_storage)
+        fill_box = QWidget()
+        fb = QHBoxLayout(fill_box)
+        fb.setContentsMargins(0, 0, 0, 0)
+        fb.setSpacing(8)
+        fb.addWidget(self.sld_hover_fill)
+        fb.addWidget(self.lbl_hover_fill)
+        self._row(c3, card3, i18n.T("settings.icons.hover.fill.title"),
+                  fill_box, i18n.T("settings.icons.hover.fill.hint"))
+
+        self.sld_hover_scale = QSlider(Qt.Horizontal)
+        self.sld_hover_scale.setRange(_ls.HOVER_SCALE_MIN, _ls.HOVER_SCALE_MAX)
+        self.sld_hover_scale.setFixedWidth(150)
+        self.sld_hover_scale.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_hover_scale.setValue(int(
+            self.storage.get_setting("icon_hover_scale")
+            or _ls.DEFAULT_HOVER_SCALE))
+        self.lbl_hover_scale = QLabel("%d%%" % self.sld_hover_scale.value())
+        self.lbl_hover_scale.setObjectName("rowHint")
+        self.lbl_hover_scale.setFixedWidth(40)
+        self.sld_hover_scale.valueChanged.connect(self._apply_hover_scale)
+        self.sld_hover_scale.sliderReleased.connect(self._flush_storage)
+        scale_box = QWidget()
+        sb = QHBoxLayout(scale_box)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setSpacing(8)
+        sb.addWidget(self.sld_hover_scale)
+        sb.addWidget(self.lbl_hover_scale)
+        self._row(c3, card3, i18n.T("settings.icons.hover.scale.title"),
+                  scale_box, i18n.T("settings.icons.hover.scale.hint"))
+
+        self.sld_hover_anim = QSlider(Qt.Horizontal)
+        self.sld_hover_anim.setRange(_ls.HOVER_ANIM_MIN, _ls.HOVER_ANIM_MAX)
+        self.sld_hover_anim.setFixedWidth(150)
+        self.sld_hover_anim.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_hover_anim.setValue(int(
+            self.storage.get_setting("icon_hover_anim")
+            or _ls.DEFAULT_HOVER_ANIM))
+        self.lbl_hover_anim = QLabel("%dms" % self.sld_hover_anim.value())
+        self.lbl_hover_anim.setObjectName("rowHint")
+        self.lbl_hover_anim.setFixedWidth(48)
+        self.sld_hover_anim.valueChanged.connect(self._apply_hover_anim)
+        self.sld_hover_anim.sliderReleased.connect(self._flush_storage)
+        anim_box = QWidget()
+        ab = QHBoxLayout(anim_box)
+        ab.setContentsMargins(0, 0, 0, 0)
+        ab.setSpacing(8)
+        ab.addWidget(self.sld_hover_anim)
+        ab.addWidget(self.lbl_hover_anim)
+        self._row(c3, card3, i18n.T("settings.icons.hover.anim.title"),
+                  anim_box, i18n.T("settings.icons.hover.anim.hint"))
+        lay.addWidget(card3)
         self._sync_label_controls()
 
     # ---- 图标页：写设置 + 热更新窗口 ----
@@ -1985,6 +2072,87 @@ class SettingsDialog(QDialog):
         """整页回出厂（两个卡片各管各的，这里一把都重置）。"""
         self._reset_label_text()
         self._reset_cell_preview()
+        self._reset_icon_hover()
+
+    # ---- v14j：hover 高亮与动画 ----
+    def _icon_hover_changed(self):
+        self._flush_storage()
+        hook = getattr(self.window, "apply_hover_style", None)
+        if callable(hook):
+            try:
+                hook()
+            except (RuntimeError, AttributeError):
+                pass
+
+    def _apply_icon_hover_enabled(self, on):
+        self.storage.set_setting("icon_hover_enabled", bool(on))
+        self._icon_hover_changed()
+
+    def _apply_hover_fill(self, v):
+        self.lbl_hover_fill.setText("%d%%" % v)
+        self.storage.set_setting("icon_hover_fill", v)
+        self._icon_hover_changed()
+
+    def _apply_hover_scale(self, v):
+        self.lbl_hover_scale.setText("%d%%" % v)
+        self.storage.set_setting("icon_hover_scale", v)
+        self._icon_hover_changed()
+
+    def _apply_hover_anim(self, v):
+        self.lbl_hover_anim.setText("%dms" % v)
+        self.storage.set_setting("icon_hover_anim", v)
+        self._icon_hover_changed()
+
+    def _sync_hover_color_btn(self):
+        c = self._icon_hover_color
+        self.btn_hover_color.setStyleSheet(
+            "QPushButton{background: %s; border: 1px solid rgba(255,255,255,60);"
+            " border-radius: 6px;}" % (c if c else "rgba(255,255,255,36)"))
+        self.btn_hover_color.setText("" if c else
+                                     i18n.T("settings.icons.hover.color.auto"))
+
+    def _pick_hover_color(self):
+        start = QColor(self._icon_hover_color) if self._icon_hover_color \
+            else QColor(255, 255, 255, 36)
+        c = QColorDialog.getColor(start, self,
+                                  i18n.T("settings.icons.hover.color.title"),
+                                  QColorDialog.DontUseNativeDialog
+                                  | QColorDialog.ShowAlphaChannel)
+        if not c.isValid():
+            return
+        self._icon_hover_color = c.name(QColor.HexArgb)
+        self._sync_hover_color_btn()
+        self.storage.set_setting("icon_hover_color", self._icon_hover_color)
+        self._icon_hover_changed()
+
+    def _reset_icon_hover(self):
+        self.storage.set_setting("icon_hover_color", "")
+        self.storage.set_setting("icon_hover_fill", 8)
+        self.storage.set_setting("icon_hover_enabled", True)
+        self.storage.set_setting("icon_hover_scale",
+                                 label_style.DEFAULT_HOVER_SCALE)
+        self.storage.set_setting("icon_hover_anim",
+                                 label_style.DEFAULT_HOVER_ANIM)
+        self._icon_hover_color = ""
+        if hasattr(self, "chk_hover_enabled"):
+            self.chk_hover_enabled.blockSignals(True)
+            self.chk_hover_enabled.setChecked(True)
+            self.chk_hover_enabled.blockSignals(False)
+            self._sync_hover_color_btn()
+            self.sld_hover_fill.blockSignals(True)
+            self.sld_hover_fill.setValue(8)
+            self.lbl_hover_fill.setText("8%")
+            self.sld_hover_fill.blockSignals(False)
+            self.sld_hover_scale.blockSignals(True)
+            self.sld_hover_scale.setValue(label_style.DEFAULT_HOVER_SCALE)
+            self.lbl_hover_scale.setText(
+                "%d%%" % label_style.DEFAULT_HOVER_SCALE)
+            self.sld_hover_scale.blockSignals(False)
+            self.sld_hover_anim.blockSignals(True)
+            self.sld_hover_anim.setValue(label_style.DEFAULT_HOVER_ANIM)
+            self.lbl_hover_anim.setText("%dms" % label_style.DEFAULT_HOVER_ANIM)
+            self.sld_hover_anim.blockSignals(False)
+        self._icon_hover_changed()
 
     def _page_layout(self, body, lay):
         card, c = self._card(body, i18n.T("settings.layout.card.grid"))

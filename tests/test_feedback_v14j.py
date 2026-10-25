@@ -298,6 +298,53 @@ def main(app):
     check("W2e 量化步进内命中缓存（1.04 vs 1.041 同 key）",
           icon._label_pm_cache[0] == k2)
 
+
+    # ---------- H1-H4 hover 高亮与动画自定义（v14j） ----------
+    from src import label_style as _lsm
+
+    sth = _st("hover.json")
+    hs = _lsm.hover_style(sth)
+    check("H1 默认：内置白 / 8% / 开 / 104% / 140ms",
+          hs.enabled and hs.scale_pct == 104 and hs.anim_ms == 140
+          and abs(hs.fill_alpha - 0.08) < 1e-6,
+          str(hs))
+    sth.set_setting("icon_hover_enabled", False)
+    sth.set_setting("icon_hover_scale", 100)
+    sth.set_setting("icon_hover_anim", 300)
+    sth.set_setting("icon_hover_color", "#80FF0000")
+    hs2 = _lsm.hover_style(sth)
+    check("H2 关闭 + 不放大 + 300ms + 自定义色",
+          not hs2.enabled and hs2.scale_pct == 100 and hs2.anim_ms == 300
+          and hs2.color.name(QColor.HexArgb).upper() == "#80FF0000")
+    sth.set_setting("icon_hover_scale", 500)
+    check("H3 放大幅度夹 112", _lsm.hover_style(sth).scale_pct == 112)
+    sth4 = _st("hover4.json")
+    check("H4 storage 默认齐",
+          sth4.get_setting("icon_hover_fill") == 8
+          and sth4.get_setting("icon_hover_anim") == 140
+          and sth4.get_setting("icon_hover_enabled") is True)
+
+    # AppIcon 侧：enter 动画尊重幅度（100% 不动画）+ 缓存失效钩子
+    icon_h = AppIcon({"id": "hv", "name": "H",
+                      "app": {"kind": "app", "name": "H", "target": "T"},
+                      "col": 0, "row": 0, "page": 0}, 64)
+    icon_h.resize(96, 96)
+    check("H4b AppIcon 有 invalidate_hover_style",
+          callable(getattr(icon_h, "invalidate_hover_style", None)))
+    from src.settings_dialog import SettingsDialog as _SD
+    sth2 = _st("hoverdlg.json")
+    dlg3 = _SD(type("W", (), {"attached": False})(), sth2, None)
+    check("H5 设置页 hover 卡存在",
+          hasattr(dlg3, "chk_hover_enabled") and hasattr(dlg3, "sld_hover_scale")
+          and hasattr(dlg3, "sld_hover_anim") and hasattr(dlg3, "btn_hover_color"))
+    dlg3.sld_hover_scale.setValue(108)
+    check("H5b 放大幅度写设置", sth2.get_setting("icon_hover_scale") == 108)
+    dlg3._reset_icon_hover()
+    check("H5c 重置回 104",
+          sth2.get_setting("icon_hover_scale") == _lsm.DEFAULT_HOVER_SCALE
+          and sth2.get_setting("icon_hover_color") == "")
+    dlg3.deleteLater()
+
     print()
     if failures:
         print("==== test_feedback_v14j: %d 项失败: %s" % (len(failures), failures))
