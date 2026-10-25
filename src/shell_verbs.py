@@ -1,5 +1,25 @@
 # -*- coding: utf-8 -*-
-"""原生右键菜单复刻（v14j 反馈：按文件类型保留原生动词，如 zip→解压全部）。
+"""原生右键菜单复刻（v14j/v14m）。
+
+v14j 用静态注册表动词（HKCR 扩展名 → shell 动词）——只覆盖传统程序，
+**现代处理器（360 压缩的"解压"等）是 shellex COM 外壳扩展，静态路线
+拿不到**（2026-10-25 用户实测：压缩包右键没有解压项）。v14m 改为
+**pywin32 IContextMenu 镜像**：SHCreateItemFromParsingName →
+BindToHandler(BHID_SFUIObject) → QueryContextMenu 拿到资源管理器同款
+菜单树，镜像进我们的 QMenu，点击 InvokeCommand 执行（与资源管理器
+同一条代码路径）。
+
+已实测：
+  * 标准动词（创建快捷方式 / 剪切 / 复制 / 粘贴 / 属性…）InvokeCommand
+    直接生效；
+  * **压缩包解压**：第三方处理器（360zip）的解压项在部分宿主里静默
+    无效（处理器挑剔宿主/站点），因此 zip 文件额外提供**自带
+    "全部解压缩"**（Shell NameSpace+CopyHere，zipfldr 引擎，不受
+    ProgID 接管影响），保证解压永远可用；7z/rar 只有原生镜像项。
+
+pywin32 是本文件引入的运行依赖（PyInstaller 自动收集），COM 需要
+STA——pythoncom.CoInitialize 在首次使用时调用，重复调用无害。
+
 
 原理：Windows 资源管理器的"右键菜单"本质是注册表里的一串 shell 动词——
 
@@ -238,3 +258,132 @@ def run_verb(argv) -> bool:
         return True
     except Exception:            # noqa: BLE001
         return False
+
+
+# ---------------------------------------------------------------- 原生菜单镜像（v14m）
+
+_NAT_INIT = False
+
+
+def _com_init():
+    """主线程 STA 初始化（Qt 已 OleInitialize 时返回 S_FALSE，无害）。"""
+    global _NAT_INIT
+    if _NAT_INIT:
+        return
+    import pythoncom
+    try:
+        pythoncom.CoInitialize()
+    except Exception:        # noqa: BLE001 —— 已初始化/失败都不致命
+        pass
+    _NAT_INIT = True
+
+
+def native_menu(path: str):
+    """文件的**原生右键菜单树**（资源管理器同款，含第三方处理器）。
+
+    返回 (nodes, invoker)：
+      * nodes = [{"label": str, "sep": bool, "id": int|None,
+                  "children": list|None}]（与资源管理器同序同文案）；
+      * invoker(id) → InvokeCommand 执行该命令（ctx 闭包持有）。
+    COM 不可用 / 非文件 / 出错 → ([], None)，调用方退回静态动词。
+
+    ctx 的生命周期：invoker 闭包持有；菜单关闭后由下一次调用替换
+    （模块级单引用，防泄漏）。
+    """
+    global _NAT_LAST_CTX
+    if not path or not os.path.isfile(path):
+        return [], None
+    try:
+        import pythoncom
+        from win32com.shell import shell
+        import win32gui
+        _com_init()
+        item = shell.SHCreateItemFromParsingName(path, None,
+                                                 shell.IID_IShellItem)
+        ctx = item.BindToHandler(None, shell.BHID_SFUIObject,
+                                 shell.IID_IContextMenu)
+    except Exception:        # noqa: BLE001 —— COM 任何失败退回静态动词
+        return [], None
+
+    # 释放上一个残留的 ctx（正常使用一次只有一个菜单存活）
+    old = globals().pop("_NAT_LAST_CTX", None)
+    del old
+
+    import ctypes
+    user32 = ctypes.windll.user32
+
+    def walk(hmenu):
+        nodes = []
+        for i in range(user32.GetMenuItemCount(hmenu)):
+            mid = win32gui.GetMenuItemID(hmenu, i)
+            sub = win32gui.GetSubMenu(hmenu, i)
+            ln = user32.GetMenuStringW(hmenu, i, None, 0, 0x400)
+            buf = ctypes.create_unicode_buffer(ln + 1) if ln else None
+            if ln:
+                user32.GetMenuStringW(hmenu, i, buf, ln + 1, 0x400)
+            label = (buf.value if buf else "").replace("&", "").strip()
+            if sub:
+                nodes.append({"label": label, "sep": False, "id": None,
+                              "children": walk(sub)})
+            elif mid == 0xFFFFFFFF and not label:
+                nodes.append({"label": "", "sep": True, "id": None,
+                              "children": None})
+            else:
+                nodes.append({"label": label, "sep": False, "id": mid,
+                              "children": None})
+        return nodes
+
+    hmenu = win32gui.CreatePopupMenu()
+    try:
+        ctx.QueryContextMenu(hmenu, 0, 1, 0x7FFF, 0)
+        nodes = walk(hmenu)
+    except Exception:        # noqa: BLE001
+        nodes = []
+
+    def invoker(menu_id):
+        if menu_id is None or menu_id < 1:
+            return
+        # (fMask, hwnd, lpVerb=命令偏移, 参数, 目录, nShow, 热键, 图标)
+        ctx.InvokeCommand((0, 0, menu_id - 1, None, None, 1, 0, 0))
+
+    globals()["_NAT_LAST_CTX"] = ctx
+    return nodes, invoker
+
+
+COMPRESSED_EXTS = {".zip"}       # Shell NameSpace 引擎保证可解压的类型
+
+
+def extract_here(zip_path: str, dest_dir: str) -> bool:
+    """把 zip 解到 dest_dir（Shell NameSpace+CopyHere，zipfldr 引擎）。
+
+    不受 .zip ProgID 被第三方（360 等）接管影响——CopyHere 走的是
+    Shell 命名空间引擎。7z/rar 等只有原生镜像项（引擎不认）。
+    """
+    try:
+        import time as _time
+        import win32com.client
+        _com_init()
+        sh = win32com.client.Dispatch("Shell.Application")
+        src = sh.NameSpace(zip_path)         # zip 视图（NameSpace 接受路径）
+        dst = sh.NameSpace(dest_dir)
+        if src is None or dst is None:
+            return False
+        dst.CopyHere(src.Items(), 16)        # 16 = "Yes to all"
+        # CopyHere 是异步的：小包瞬间完成，大包由调用方轮询
+        deadline = _time.time() + 30
+        while _time.time() < deadline:
+            if list(os.listdir(dest_dir)):
+                return True
+            _time.sleep(0.2)
+        return True                          # 超时也返回 True（大包在后台解）
+    except Exception:                        # noqa: BLE001
+        return False
+
+
+def notify_extract(dest_dir: str):
+    """解压完成后托盘提示（CopyHere 异步，完成时机不定——尽力而为）。"""
+    try:
+        from .tray import notify_via_tray
+        notify_via_tray("解压完成", "已解压到 %s" % dest_dir)
+    except Exception:        # noqa: BLE001
+        pass

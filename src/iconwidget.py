@@ -42,6 +42,8 @@ from . import label_style as _ls
 from .folder_tint import folder_liquid, folder_tint
 from .stepper import Stepper
 from . import theme
+import os
+
 from .storage import entry_app
 
 MIME_TYPE = "application/x-desktoporg-item"
@@ -1766,25 +1768,64 @@ class AppIcon(QWidget):
         self.openLocation.emit(self.entry.get("app", {}))
 
     def _add_shell_verbs(self, menu):
-        """按文件类型追加原生菜单动词（v14j 反馈：zip→解压等）。
+        """按文件类型追加原生右键菜单（v14j 静态动词 → v14m COM 镜像）。
 
-        注册表读出的 (label, argv) 逐个变 QAction；含 "&" 助记符已在
-        shell_verbs 里剥掉。读不到（非文件/无扩展名/全 DDE）就不加。
+        v14m：走 pywin32 IContextMenu 镜像资源管理器**同款**菜单树
+        （含第三方处理器：360 压缩的解压项等），点击 InvokeCommand 与
+        资源管理器同一条代码路径。zip 额外提供**自带「全部解压缩」**
+        （Shell 引擎 CopyHere，不受 ProgID 接管影响——第三方处理器的
+        解压项在程序化调用下可能静默无效）。COM 失败退回静态动词。
         """
         try:
             from . import appsource, shell_verbs
             target = appsource.reveal_path_for(self.entry.get("app", {}))
             if not target:
                 return
-            verbs = shell_verbs.shell_verbs(target)
-            if not verbs:
-                return
-            menu.addSeparator()
-            for label, argv in verbs:
-                menu.addAction(
-                    label, lambda a=list(argv): shell_verbs.run_verb(a))
+            ext = os.path.splitext(target)[1].lower()
+            added = False
+            # ① zip：自带「全部解压缩」（保证可用，插在最前）
+            if ext in shell_verbs.COMPRESSED_EXTS:
+                dest_dir = os.path.dirname(target)
+                act = menu.addAction("全部解压缩", lambda: (
+                    shell_verbs.extract_here(target, dest_dir),
+                    shell_verbs.notify_extract(dest_dir)))
+                added = True
+            # ② 原生菜单镜像（COM）
+            nodes, invoker = shell_verbs.native_menu(target)
+            if nodes and invoker is not None:
+                self._build_native_menu(menu, nodes, invoker)
+                added = True
+            if not added:
+                # ③ 静态动词兜底（COM 不可用时的旧路线）
+                verbs = shell_verbs.shell_verbs(target)
+                if verbs:
+                    menu.addSeparator()
+                    for label, argv in verbs:
+                        menu.addAction(
+                            label, lambda a=list(argv):
+                            shell_verbs.run_verb(a))
         except Exception:        # noqa: BLE001 —— 动词失败不影响基础菜单
             return
+
+    def _build_native_menu(self, menu, nodes, invoker):
+        """把 native_menu 的节点树镜像进 QMenu（保留分隔线与子菜单）。"""
+        for node in nodes:
+            if node["sep"]:
+                menu.addSeparator()
+                continue
+            label = node["label"]
+            if not label:
+                continue
+            if node["children"] is not None:
+                sub = menu.addMenu(label)
+                self._build_native_menu(sub, node["children"], invoker)
+                if sub.isEmpty():
+                    sub.menuAction().setVisible(False)
+                continue
+            if label in ("打开(O)", "打开"):
+                continue          # 顶部已有「打开」，去重
+            mid = node["id"]
+            menu.addAction(label, lambda m=mid: invoker(m))
 
     def _open_folder(self):
         self.folderClicked.emit(self.entry["id"])
