@@ -95,8 +95,8 @@ def main(app):
     m = dock.metrics(1.0, 4, 32, 10, 8, 1.5)
     check("G2 图标/间隔/内边距按参数生效",
           m.icon == 32 and m.gap == 10 and m.pad == 8, str(m))
-    check("G2b 厚度 = pad*2 + icon*hover",
-          m.thickness == 8 * 2 + int(round(32 * 1.5)), str(m.thickness))
+    check("G2b 厚度 = pad*2 + icon（v14r：不乘 hover）",
+          m.thickness == 8 * 2 + 32, str(m.thickness))
     check("G2c 长度 = pad*2 + n*icon + (n-1)*gap",
           m.length == 8 * 2 + 4 * 32 + 3 * 10, str(m.length))
     check("G2d hover 进快照", abs(m.hover - 1.5) < 1e-9, str(m.hover))

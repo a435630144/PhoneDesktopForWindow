@@ -116,12 +116,14 @@ def main():
           "%d vs %d" % (m1.icon, m2.icon))
     check("D4 pad 随 scale 线性", m2.pad == m1.pad * 2,
           "%d vs %d" % (m1.pad, m2.pad))
-    check("D4 thickness 包得住 hover 放大",
-          m1.thickness >= m1.icon * dock.DOCK_HOVER,
-          "thickness=%d icon=%d" % (m1.thickness, m1.icon))
-    check("D4 thickness = pad*2 + hover 图标",
-          m1.thickness == m1.pad * 2 + int(round(m1.icon * dock.DOCK_HOVER)),
+    check("D4 thickness = pad*2 + 图标（v14r：hover 不再计入）",
+          m1.thickness == m1.pad * 2 + m1.icon,
           str(m1.thickness))
+    # v14r 解耦判据：悬停倍数改了，条带厚度不动（放大吃内边距余量）
+    m_h = dock.metrics(1.0, 8, hover=1.5)
+    check("D4b hover 倍数不影响厚度",
+          m_h.thickness == m1.thickness,
+          "%d vs %d" % (m_h.thickness, m1.thickness))
     check("D4 空态也占位（length > 0）", m1.length > 0, str(m1.length))
     check("D4 length 随条目数增长",
           dock.metrics(1.0, 10).length > dock.metrics(1.0, 4).length,
@@ -339,8 +341,8 @@ def main():
           "icon=%d" % m_def.icon)
     check("D15 空态 4 槽位（条带不缩成一点）", m_def.slots == dock.MIN_SLOTS == 4,
           "slots=%d" % m_def.slots)
-    check("D15 空态厚度 = 内边距*2 + 图标*hover（给放大留空间，不出窗口）",
-          m_def.thickness == m_def.pad * 2 + int(round(m_def.icon * m_def.hover)),
+    check("D15 空态厚度 = 内边距*2 + 图标（v14r：hover 不计入，放大吃内边距）",
+          m_def.thickness == m_def.pad * 2 + m_def.icon,
           "thick=%d" % m_def.thickness)
     check("D15 空态长度 = pad*2 + 4*icon + 3*gap",
           m_def.length == m_def.pad * 2 + 4 * m_def.icon + 3 * m_def.gap,

@@ -17,7 +17,7 @@
 ## 尺寸模型
 
 图标基准 `DOCK_ICON` 逻辑像素 **只乘 `ui_scale()`**（B2 的单一旋钮，
-dpr 由 Qt 用一次）。条带厚度预留了 hover 放大空间，所以 hover 时图标
+dpr 由 Qt 用一次）。悬停放大吃内边距空间（见 `_hover_grow`），不越条带。
 仍在窗口内——**不做 macOS 式"跳出条带"**：分层窗超出窗口的绘制会被
 裁剪，要做就得把窗口开大，而多出的透明区会挡住网格图标的点击
 （"透明区穿透不是普遍真理"，坑 #39）。v11 若要，得先解决命中测试。
@@ -298,8 +298,14 @@ def metrics(ui_scale, count: int, base: int = DOCK_ICON,
             pad_l: int = None, pad_r: int = None) -> DockMetrics:
     """Dock 几何：图标/间距/内边距只随 `ui_scale` 线性放大。
 
-    条带厚度 = 副轴两向内边距 + hover 后的图标边长——**预留放大空间**是有意的：
-    hover 时图标在条带内长大，永远不出窗口（见模块 docstring）。
+    条带厚度 = 副轴两向内边距之和 + **静止**图标边长（v14r 改模型）。
+
+    旧模型把 hover 预留（icon×hover）算进厚度——三个旋钮（图标/内边距/
+    悬停放大）都联动条带尺寸，且静止时条带比图标高一截（默认 44×1.4），
+    用户反馈"尺寸与内边距该分开"。新模型：**厚度只由四向内边距 + 图标
+    决定**（macOS Dock 同构——图标变大条带同比变厚是几何必然）；悬停
+    放大改为**吃内边距空间向两侧生长**，绘制处按方向余量夹取（
+    `_hover_grow`），永不越出条带。
 
     `pad_t/b/l/r` 缺省时四向都用 `pad`（兼容旧单值调用）。
     """
@@ -321,7 +327,7 @@ def metrics(ui_scale, count: int, base: int = DOCK_ICON,
     # 这里保守取 max——两种方向下都不会画出比实际小的窗口。
     cross = max(pt + pb, pl + pr)
     main = min(pt + pb, pl + pr)
-    thickness = cross + int(round(icon * h))
+    thickness = cross + icon
     slots = max(MIN_SLOTS, min(DOCK_MAX_ITEMS, max(0, int(count))))
     length = main + slots * icon + (slots - 1) * g
     return DockMetrics(icon, g, p, thickness, length, slots, h, pt, pb, pl, pr)
@@ -878,6 +884,21 @@ class DockWindow(QWidget):
             curve=effects.spring_curve(1.0, HOVER_MS))
         self._anim = anim
 
+    def _hover_grow(self) -> float:
+        """当前 hover 帧的放大增量（px），按方向余量夹取（v14r）。
+
+        厚度不再预留 hover 空间——放大从内边距里"借"：grow 上限 =
+        副轴两向内边距之和 - 2（留 2px 呼吸）。lift（上飘）= grow/2，
+        上侧需求 = grow/2 + lift = grow，同一上限内放得下。
+        """
+        m = self._m
+        raw = m.icon * (m.hover - 1.0) * self._hover_t
+        if raw <= 0:
+            return 0.0
+        cross = ((m.pad_t + m.pad_b) if self._position in ("bottom", "top")
+                 else (m.pad_l + m.pad_r))
+        return max(0.0, min(raw, max(0.0, cross - 2)))
+
     def _spread(self, index: int) -> int:
         """hover 时相邻图标的让位位移（像素，正 = 向后推）。"""
         if self._hover_index is None or self._hover_t <= 0.001:
@@ -885,7 +906,7 @@ class DockWindow(QWidget):
         d = abs(int(index) - int(self._hover_index))
         if d == 0 or d > 2:
             return 0
-        grow = self._m.icon * (self._m.hover - 1.0) * self._hover_t
+        grow = self._hover_grow()
         falloff = 0.5 if d == 1 else 0.18
         shift = int(round(grow * falloff))
         return shift if index > self._hover_index else -shift
@@ -1028,7 +1049,7 @@ class DockWindow(QWidget):
         grow = 0.0
         lift = 0.0
         if i == self._hover_index:
-            grow = m.icon * (m.hover - 1.0) * self._hover_t
+            grow = self._hover_grow()
             # v14 反馈 5：iOS 的放大是"抬起"——图标往上飘出 Shelf 一点，
             # 不是原地胀大。抬升量取放大增量的一半（视觉上仍以放大为主）。
             lift = grow * 0.5
