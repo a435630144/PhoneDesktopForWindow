@@ -4,15 +4,15 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.2.0 (v14e)**. It studies [liquid-glass-react](https://github.com/rdev/liquid-glass-react) (the Web take on Apple's Liquid Glass) and brings **four adjustable optical layers** to liquid glass: glass saturation (140% by default, richer colours through the glass), frosting (0 = clear glass), edge dispersion and rim light (both off by default) — all live in Settings ▸ Appearance ▸ Liquid Glass. It also fixes two real-machine incidents: a **zombie process self-heal** after windows are destroyed externally (windows are rebuilt, or the app safely quits and restores desktop icons under a revive storm), and an exit path that bypassed the tray and **forgot to restore hidden desktop icons**. The preceding 8.1.0 landed the full code-audit fix batch and the **grid beside the Dock**; 8.0.2 turned liquid glass into a **real-time refraction** and **a colour choice**. **104 test files green**. Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.3.0 (v14j)**, a feedback batch: fixed the **watchdog misjudging closing popups as killed windows** (repeated hover-open could tear down the takeover), popups no longer auto-close while you hover the colour/add-app panels, folders **auto-dissolve after files are removed externally**, widget content **no longer vanishes in edit mode**, hover label **sharpness** (the label layer is baked at the current frame scale), **collapsed liquid-glass folders refract for real**, glass saturation baked at snapshot level (no more stutter while dragging), the render-rate setting is now the **global animation frame rate**, a dedicated **About page**, the widget centre picks up new plugins **without a restart**, native **shell verbs on the file context menu**, and **customisable hover highlight/animation**. Settings were restructured to 8 tabs in 8.2.0 with corrected branding (English name PhoneDesktop). **106 test files green**. Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v8.2.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-104%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-106%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 A third-party desktop organizer and beautifier for Windows with a **phone-style UI and interaction model**: it mounts its own grid layer above the native desktop and replaces native icons with a fully controlled rendering layer — positions, animations, folders and widgets are all yours to define.
 
-Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **104 test files**. The product is called **掌镜桌面**; its English name is **PhoneDesktop**, matching the exe and data dir names so existing users' paths stay valid.
+Despite the name, this is **far past the prototype stage**: installer, tray residency, crash logging, single-instance guard, auto re-attach watchdog, **106 test files**. The product is called **掌镜桌面**; its English name is **PhoneDesktop**, matching the exe and data dir names so existing users' paths stay valid.
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="The desktop: Android-style icon grid with anchored widgets"></p>
 
@@ -207,6 +207,16 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.3.0 (v14j) · 2026-10-25 feedback batch: stability + folder interactions + liquid glass + settings pages → [notes](docs/release_notes/8.3.0.md)
+
+- **Stability**: fixed repeated hover-opening of a folder letting the watchdog mistake "closing popups" for killed windows — after enough revives it restored native icons and quit the takeover (windows are now untracked before close, `_closing` windows skip the revive path, and the shrink animation holds its reference)
+- **Folders**: hover auto-close is faster (750ms→450ms); hovering the colour / add-app panels no longer counts as "left the popup"; folders **auto-dissolve when files are removed externally**; members get "Show in folder" in the context menu; horizontal swipe threshold 28→22px
+- **Liquid glass**: collapsed folder tiles **refract for real** (previously transparent + white edge only); saturation is baked into the wallpaper snapshot — no more stutter while dragging widgets
+- **Icons**: hover label blur fixed (the label layer is baked at the current frame scale, shadow and text share one transform); **hover highlight and animation are customisable** (colour / strength / scale / duration, all switchable off)
+- **Widgets**: content **no longer disappears in resize-edit mode**; the widget centre picks up new plugins **without a restart** (refresh button + shop installs rebuild cards); tighter UI (no duplicated title, single-column cards are width-capped and centred)
+- **Settings**: render rate is now the **global animation frame rate**; a dedicated **About** page (app / version / update check / author)
+- **Desktop**: the file context menu appends **native shell verbs** from the registry (edit/print etc.; unzip handlers implemented as shellex COM add-ins cannot be replicated — honestly degraded)
 
 ### 8.2.0 (v14e) · 2026-10-25 liquid glass upgrade: four adjustable optical layers after liquid-glass-react + zombie self-heal → [notes](docs/release_notes/8.2.0.md)
 

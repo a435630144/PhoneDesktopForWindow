@@ -133,7 +133,7 @@
   "panel.weather_cached": "{city} · cached",
   "panel.weather_city_note": "{city} · live",
   "panel.weather_unset": "Set a city to show weather",
-  "settings.about.app.name.hint": "掌镜桌面 (English: PhoneDesktop)",
+  "settings.about.app.name.hint": "Zhangjing Desktop is the Chinese name; the English product name is PhoneDesktop",
   "settings.about.app.name.title": "Name",
   "settings.about.app.version.hint": "Build label: semver + iteration letter + build time",
   "settings.about.app.version.title": "Version",

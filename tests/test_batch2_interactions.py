@@ -170,9 +170,10 @@ def main(app):
         check("H6a 悬停打开 -> 自动关闭定时器启动",
               popup._auto_close.isActive())
         _Cursor.pt = QPoint(5, 5)               # 屏幕左上角：既不在图标也不在弹窗
-        for _ in range(3):
+        # v14j：AUTO_CLOSE_MISS 3 -> 2（自动关提速）
+        for _ in range(2):
             popup._auto_close_tick()
-        check("H6b 连丢 3 拍 -> 自动关闭", len(closed) == 1, str(len(closed)))
+        check("H6b 连丢 2 拍 -> 自动关闭", len(closed) == 1, str(len(closed)))
 
         closed.clear()
         _Cursor.pt = popup.frameGeometry().center()
