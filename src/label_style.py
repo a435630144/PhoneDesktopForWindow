@@ -45,6 +45,8 @@ DEFAULT_PREVIEW_WIDTH = 2
 DEFAULT_PREVIEW_RADIUS = 8
 
 LABEL_SHADOW_MIN, LABEL_SHADOW_MAX = 0, 100
+FONT_SCALE_MIN, FONT_SCALE_MAX = 70, 140      # %（v14q 图标字号调节）
+DEFAULT_FONT_SCALE = 100
 LABEL_OUTLINE_MIN, LABEL_OUTLINE_MAX = 1, 3
 PREVIEW_FILL_MIN, PREVIEW_FILL_MAX = 0, 40
 PREVIEW_WIDTH_MIN, PREVIEW_WIDTH_MAX = 1, 4
@@ -76,6 +78,7 @@ class LabelStyle(NamedTuple):
     outline: bool
     outline_color: QColor
     outline_width: int           # 1~3
+    font_scale: float = 1.0      # 字号缩放（v14q：0.7~1.4，基准=图标档字号）
 
 
 class PreviewStyle(NamedTuple):
@@ -173,7 +176,9 @@ def label_style(storage) -> LabelStyle:
                              DEFAULT_OUTLINE_COLOR),
         outline_width=_int(storage, "label_outline_width",
                            DEFAULT_OUTLINE_WIDTH,
-                           LABEL_OUTLINE_MIN, LABEL_OUTLINE_MAX))
+                           LABEL_OUTLINE_MIN, LABEL_OUTLINE_MAX),
+        font_scale=_int(storage, "label_font_scale", DEFAULT_FONT_SCALE,
+                        FONT_SCALE_MIN, FONT_SCALE_MAX) / 100.0)
 
 
 def default_preview_style() -> PreviewStyle:

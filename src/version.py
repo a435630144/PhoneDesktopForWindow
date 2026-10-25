@@ -34,7 +34,7 @@ import datetime
 import os
 import sys
 
-VERSION = "14p"
+VERSION = "14q"
 # 对外语义版本。改这里就必须同批改 scripts/installer.iss 的 MyAppVersion。
 SEMVER = "8.3.0"
 

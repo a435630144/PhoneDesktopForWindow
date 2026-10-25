@@ -309,6 +309,47 @@ def main(app):
     check("R3 预览框按设置画成绿色", n_green > 100, "green=%d" % n_green)
     w3.close()
 
+    # ---------- FS：图标字号缩放（v14q） ----------
+    st_fs = _st("fs.json")
+    check("FS 默认 100%", st_fs.get_setting("label_font_scale") == 100)
+    stys = ls.label_style(st_fs)
+    check("FSb 默认 font_scale=1.0", abs(stys.font_scale - 1.0) < 1e-6)
+    st_fs.set_setting("label_font_scale", 130)
+    check("FSc 130% -> 1.3",
+          abs(ls.label_style(st_fs).font_scale - 1.3) < 1e-6)
+    st_fs.set_setting("label_font_scale", 500)
+    check("FSd 越界夹 140",
+          abs(ls.label_style(st_fs).font_scale - 1.4) < 1e-6)
+
+    # 图标侧：字号随样式热更新（基准 × 缩放）
+    from src.iconwidget import AppIcon
+    ic = AppIcon({"id": "fs1", "name": "字",
+                  "app": {"kind": "app", "name": "字", "target": "T"},
+                  "col": 0, "row": 0, "page": 0}, 64)
+    base_px = ic._label_font_base
+    px0 = ic._label_font_px
+    check("FSe 100% 时字号=基准", px0 == base_px,
+          "%d/%d" % (px0, base_px))
+    st_fs.set_setting("label_font_scale", 130)
+    ic.set_label_style(ls.label_style(st_fs))
+    check("FSf 130% 热更新字号=基准×1.3",
+          ic._label_font_px == max(9, min(40, int(round(base_px * 1.3)))),
+          "base=%d now=%d" % (base_px, ic._label_font_px))
+
+    # 设置页滑条写键 + 重置回 100
+    from src.settings_dialog import SettingsDialog as _SD2
+    st_dlg = _st("fs_dlg.json")
+    dlg_fs = _SD2(type("W2", (), {"attached": False})(), st_dlg, None)
+    check("FSg 设置页有字号滑条", hasattr(dlg_fs, "sld_label_font"))
+    dlg_fs.sld_label_font.setValue(125)
+    check("FSH 滑条写键", st_dlg.get_setting("label_font_scale") == 125,
+          str(st_dlg.get_setting("label_font_scale")))
+    dlg_fs._reset_label_text()
+    check("FSi 重置回 100",
+          st_dlg.get_setting("label_font_scale")
+          == ls.DEFAULT_FONT_SCALE)
+    dlg_fs.deleteLater()
+
     print("---------------------------------------------------------")
     if failures:
         print("FAILED %d: %s" % (len(failures), failures))

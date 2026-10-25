@@ -316,6 +316,8 @@
   "settings.icons.card.text": "Label text",
   "settings.icons.color.hint": "Colour of the file name under each icon. White by default, matching native Windows",
   "settings.icons.color.title": "Text colour",
+  "settings.icons.font_size.hint": "Relative size of icon labels (100% follows the icon tier)",
+  "settings.icons.font_size.title": "Label font size",
   "settings.icons.hover.anim.hint": "Duration of the hover zoom in/out",
   "settings.icons.hover.anim.title": "Hover animation",
   "settings.icons.hover.color.auto": "Auto",

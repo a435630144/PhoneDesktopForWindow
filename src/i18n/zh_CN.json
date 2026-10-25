@@ -316,6 +316,8 @@
   "settings.icons.card.text": "标签文字",
   "settings.icons.color.hint": "图标下方文件名的颜色。默认白色，1:1 还原 Windows 原生桌面",
   "settings.icons.color.title": "文字颜色",
+  "settings.icons.font_size.hint": "图标文字的相对大小（100% 跟随图标档位）",
+  "settings.icons.font_size.title": "图标字号",
   "settings.icons.hover.anim.hint": "悬停放大/回位的动画时长",
   "settings.icons.hover.anim.title": "悬停动画时长",
   "settings.icons.hover.color.auto": "自动",

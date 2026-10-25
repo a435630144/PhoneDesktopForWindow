@@ -1450,6 +1450,29 @@ class SettingsDialog(QDialog):
         self._row(c, card, i18n.T("settings.icons.bold.title"),
                   self.chk_label_bold, i18n.T("settings.icons.bold.hint"))
 
+        # v14q：图标字号（基准=图标档位字号，按百分比缩放——三档图标
+        # 大小/高 DPI 下基准自适应，这里只管相对大小）
+        self.sld_label_font = QSlider(Qt.Horizontal)
+        self.sld_label_font.setRange(_ls.FONT_SCALE_MIN, _ls.FONT_SCALE_MAX)
+        self.sld_label_font.setFixedWidth(150)
+        self.sld_label_font.setStyleSheet(theme.SLIDER_QSS)
+        self.sld_label_font.setValue(int(
+            self.storage.get_setting("label_font_scale")
+            or _ls.DEFAULT_FONT_SCALE))
+        self.lbl_label_font = QLabel("%d%%" % self.sld_label_font.value())
+        self.lbl_label_font.setObjectName("rowHint")
+        self.lbl_label_font.setFixedWidth(40)
+        self.sld_label_font.valueChanged.connect(self._apply_label_font)
+        self.sld_label_font.sliderReleased.connect(self._flush_storage)
+        fbox = QWidget()
+        fl = QHBoxLayout(fbox)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.setSpacing(8)
+        fl.addWidget(self.sld_label_font)
+        fl.addWidget(self.lbl_label_font)
+        self._row(c, card, i18n.T("settings.icons.font_size.title"),
+                  fbox, i18n.T("settings.icons.font_size.hint"))
+
         self.chk_label_shadow = Switch()
         self.chk_label_shadow.setChecked(
             bool(self.storage.get_setting("label_shadow")))
@@ -2007,6 +2030,12 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("cell_preview_radius", int(v))
         self._label_style_changed()
 
+    def _apply_label_font(self, v):
+        """图标字号缩放（v14q）：写键 + 走标签热更新链（不重建图标）。"""
+        self.lbl_label_font.setText("%d%%" % v)
+        self.storage.set_setting("label_font_scale", int(v))
+        self._label_style_changed()
+
     def _reset_label_text(self):
         """标签文字回出厂（= Windows 原生：白字 + 柔和黑阴影，无描边）。"""
         from . import label_style as _ls
@@ -2022,6 +2051,7 @@ class SettingsDialog(QDialog):
         self.storage.set_setting("label_outline_color",
                                  d.outline_color.name())
         self.storage.set_setting("label_outline_width", d.outline_width)
+        self.storage.set_setting("label_font_scale", _ls.DEFAULT_FONT_SCALE)
         # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
         self._label_color = d.color.name()
         self._sync_label_color_btn()
@@ -2038,6 +2068,10 @@ class SettingsDialog(QDialog):
         self.sp_label_outline_w.blockSignals(True)
         self.sp_label_outline_w.setValue(d.outline_width)
         self.sp_label_outline_w.blockSignals(False)
+        self.sld_label_font.blockSignals(True)
+        self.sld_label_font.setValue(_ls.DEFAULT_FONT_SCALE)
+        self.sld_label_font.blockSignals(False)
+        self.lbl_label_font.setText("%d%%" % _ls.DEFAULT_FONT_SCALE)
         self._sync_label_controls()
         self._label_style_changed()
 

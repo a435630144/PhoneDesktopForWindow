@@ -199,7 +199,8 @@ class AppIcon(QWidget):
             self.icon_size = int(layout.icon_box)      # 绘制区（pixmap 边长）
             self._box_x = int(layout.chrome_x)         # 绘制区左侧留白（居中）
             self._label_h = int(layout.label_h)
-            self._label_font_px = int(layout.font_px)
+            self._label_font_base = int(layout.font_px)
+            self._label_font_px = self._scale_font_px(self._label_font_base)
             self.setFixedSize(int(layout.widget_w), int(layout.widget_h))
         elif compact:
             # 文件夹内部格（2026-10-19 反馈 6）：手机文件夹是**紧凑图标阵**。
@@ -213,7 +214,8 @@ class AppIcon(QWidget):
             self.icon_size = int(icon_size)
             self._box_x = px
             self._compact = True
-            self._label_font_px = max(10, int(round(11 * self._m)))
+            self._label_font_base = max(10, int(round(11 * self._m)))
+            self._label_font_px = self._scale_font_px(self._label_font_base)
             if self._no_label:
                 self._label_h = 0
                 self.setFixedSize(icon_size + px * 2, icon_size + pad * 2)
@@ -227,7 +229,8 @@ class AppIcon(QWidget):
             self._label_h = int(round(34 * self._m))
             # 旧路径标签字号也按 chrome 现算存档（12px @100%，15px @125%），
             # 属性语义统一：_label_font_px 始终有值
-            self._label_font_px = max(11, int(round(theme.LABEL_SIZE * self._m)))
+            self._label_font_base = max(11, int(round(theme.LABEL_SIZE * self._m)))
+            self._label_font_px = self._scale_font_px(self._label_font_base)
             # chrome 精修（2026-10-18 用户反馈"图标大小不对"）：旧值 28/46 的
             # 留白占比过大，图标显小。收紧到 24/40，标签贴近图标 6px。
             self.setFixedSize(icon_size + int(round(24 * self._m)),
@@ -334,6 +337,14 @@ class AppIcon(QWidget):
     hover_scale = Property(float, _get_hover_scale, _set_hover_scale)
     press_scale = Property(float, _get_press_scale, _set_press_scale)
     appear = Property(float, _get_appear, _set_appear)
+
+    def _scale_font_px(self, px: int) -> int:
+        """基准字号 × 用户字号缩放（v14q；夹 9~40 防极端）。"""
+        try:
+            k = float(getattr(self._label_style, "font_scale", 1.0) or 1.0)
+        except Exception:        # noqa: BLE001
+            k = 1.0
+        return max(9, min(40, int(round(int(px) * k))))
 
     def _animate(self, prop, start, end, duration, easing=None):
         """启动属性动画（自动停止同属性上的旧动画并持有引用防 GC）。"""
@@ -983,6 +994,10 @@ class AppIcon(QWidget):
     def set_label_style(self, style):
         """热更新标签文字样式（v14 反馈 3：设置里改完立刻重画，不重建图标）。"""
         self._label_style = style
+        # v14q：字号缩放变了要重算字号（贴图缓存 key 含字号，自动失效）
+        base = getattr(self, "_label_font_base", None)
+        if base is not None:
+            self._label_font_px = self._scale_font_px(base)
         self.update()
 
     def invalidate_hover_style(self):
