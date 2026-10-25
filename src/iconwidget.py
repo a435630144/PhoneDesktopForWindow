@@ -1676,6 +1676,7 @@ class AppIcon(QWidget):
         elif self.is_file:
             menu.addAction("打开", self._open)
             menu.addAction("在文件夹中显示", self._reveal)
+            self._add_shell_verbs(menu)
             menu.addAction("从整理桌面移除", self._remove_self)
         else:
             menu.addAction("打开", self._open)
@@ -1758,6 +1759,27 @@ class AppIcon(QWidget):
 
     def _reveal(self):
         self.openLocation.emit(self.entry.get("app", {}))
+
+    def _add_shell_verbs(self, menu):
+        """按文件类型追加原生菜单动词（v14j 反馈：zip→解压等）。
+
+        注册表读出的 (label, argv) 逐个变 QAction；含 "&" 助记符已在
+        shell_verbs 里剥掉。读不到（非文件/无扩展名/全 DDE）就不加。
+        """
+        try:
+            from . import appsource, shell_verbs
+            target = appsource.reveal_path_for(self.entry.get("app", {}))
+            if not target:
+                return
+            verbs = shell_verbs.shell_verbs(target)
+            if not verbs:
+                return
+            menu.addSeparator()
+            for label, argv in verbs:
+                menu.addAction(
+                    label, lambda a=list(argv): shell_verbs.run_verb(a))
+        except Exception:        # noqa: BLE001 —— 动词失败不影响基础菜单
+            return
 
     def _open_folder(self):
         self.folderClicked.emit(self.entry["id"])

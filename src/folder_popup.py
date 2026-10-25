@@ -119,6 +119,7 @@ ZOOM_TO = 0.55     # 关闭时玻璃收起的缩放
 # 关得不够利落；225×2≈450ms 兼顾"划过去不算离开"的抖动容错）
 AUTO_CLOSE_TICK_MS = 225
 AUTO_CLOSE_MISS = 2
+SWIPE_PX = 22       # 弹窗内横滑翻页阈值（v14j 28->22，用户反馈滑动不跟手）
 SCRIM_ALPHA = 71   # 幕布黑透明度（0.28 × 255 ≈ 71）
 TINT_OVERLAY_ALPHA = 46   # 弹窗背板上的色板色覆盖层透明度
 
@@ -1248,7 +1249,7 @@ class FolderPopup(QWidget):
         if self._swipe_x is not None:
             dx = pos.x() - self._swipe_x
             dy = pos.y() - (self._swipe_y or pos.y())
-            if abs(dx) >= 28 and abs(dx) > abs(dy):
+            if abs(dx) >= SWIPE_PX and abs(dx) > abs(dy):
                 self._page_step(-1 if dx > 0 else 1)
                 self._swipe_x = None
                 any_hover = True
