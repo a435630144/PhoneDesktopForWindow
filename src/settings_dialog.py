@@ -2487,17 +2487,26 @@ class SettingsDialog(QDialog):
                   i18n.T("settings.advanced.files.hint"))
         lay.addWidget(card)
 
-        # 「关于」：版本标识（v6c 跑错包事故的取证设施——从桌面右键挪到这里，
-        # 既满足"右键别塞版本号"，又保留"一眼看出跑的是哪个包"的能力）。
-        card, c = self._card(body, i18n.T("settings.advanced.card.about"))
-        from . import version
-        self.lbl_about_version = QLabel(version.label())
-        self.lbl_about_version.setObjectName("rowHint")
-        self._row(c, card, i18n.T("settings.advanced.version.title"),
-                  self.lbl_about_version,
-                  i18n.T("settings.advanced.version.hint"))
+        # v14s：关于/版本/更新/作者都在「关于」页——高级页不再重复。
+
+        # 恢复默认配置（v14s：用户要求）：全部设置回出厂。图标排布与
+        # 小组件是用户内容不属"配置"，保留（确认框里写明）。
+        card, c = self._card(body,
+                             i18n.T("settings.advanced.reset.card"))
+        self.btn_reset_all = QPushButton(
+            i18n.T("settings.advanced.reset.button"))
+        self.btn_reset_all.setCursor(Qt.PointingHandCursor)
+        self.btn_reset_all.setStyleSheet(
+            "QPushButton{background: rgba(232,93,116,36);"
+            " border: 1px solid rgba(232,93,116,120);"
+            " border-radius: 8px; padding: 6px 16px; font-size: 12px;"
+            " color: rgb(240,152,162);}"
+            "QPushButton:hover{background: rgba(232,93,116,60);}")
+        self.btn_reset_all.clicked.connect(self._reset_all_settings)
+        self._row(c, card, i18n.T("settings.advanced.reset.title"),
+                  self.btn_reset_all,
+                  i18n.T("settings.advanced.reset.hint"))
         lay.addWidget(card)
-        # v14j：更新卡 / 作者卡迁往「关于」页（_page_about）
 
     def _page_about(self, body, lay):
         """关于页（v14j，用户要求：关于软件 / 检测更新 / 关于作者集中一页）。
@@ -2666,6 +2675,50 @@ class SettingsDialog(QDialog):
                 cmb.blockSignals(False)
         if sld is not None:
             sld.setEnabled(tier == "custom")
+
+    def _reset_all_settings(self):
+        """全部设置恢复出厂（v14s）：二次确认 -> reset -> 应用 -> 重开面板。
+
+        面板控件全是构造时读值的一次性快照，逐个回填既繁琐又易漏——
+        直接关掉重开（单例重建），所有控件自然显示默认值。
+        """
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle(i18n.T("settings.advanced.reset.title"))
+        box.setText(i18n.T("settings.advanced.reset.confirm"))
+        box.setInformativeText(i18n.T("settings.advanced.reset.confirm_info"))
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.button(QMessageBox.Yes).setText(
+            i18n.T("settings.advanced.reset.yes"))
+        box.button(QMessageBox.No).setText(i18n.T("button.cancel"))
+        if box.exec() != QMessageBox.Yes:
+            return
+        try:
+            self.storage.reset_settings()
+        except Exception:        # noqa: BLE001 —— 重置失败就别动运行态
+            return
+        self._flush_storage()
+        # 推运行态：把散落在各分页的"改完即生效"钩子按依赖顺序打一遍
+        # （与 _FakeWin 契约一致：缺了就跳过，不硬依赖）
+        for hook in ("set_desktop_hotkeys", "apply_label_style",
+                     "apply_hover_style", "apply_liquid_style",
+                     "apply_dock_settings", "apply_dock_style"):
+            fn = getattr(self.window, hook, None)
+            if callable(fn):
+                try:
+                    fn(True) if hook == "set_desktop_hotkeys" else fn()
+                except (RuntimeError, AttributeError):
+                    pass
+        # 图标档位/网格几何类（icon tier 回默认）+ 全量重建
+        self._refresh_grid()
+        # 关掉重开：控件重新按默认值构建
+        self.accept()
+        global _dialog
+        _dialog = None
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: open_settings(
+            self.window, self.storage, self.layer, page="advanced"))
 
     def _apply_icon_tier(self, _index):
         tier = self.cmb_tier.currentData()

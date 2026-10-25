@@ -747,6 +747,16 @@ class Storage:
         self.save()
         return ox, oy
 
+    def reset_settings(self) -> None:
+        """全部设置恢复出厂默认（v14s：设置 ▸ 高级「恢复默认配置」）。
+
+        只重置 `settings` 字典——图标排布（layout）与小组件（widgets）
+        是用户内容，不属于"配置"，保留。个别"用户已做过选择"类状态
+        （如 onboarding 已看过）会跟着回默认，属可接受代价。
+        """
+        self._data["settings"] = deepcopy(DEFAULT_SETTINGS)
+        self.save()
+
     def reset_grid_origin(self):
         """重置到居中（**唯一**把两键一起清空的入口）。
 

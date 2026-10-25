@@ -576,6 +576,79 @@ def main(app):
     win7._discard_closing_widget(tw)
     win7.close()
 
+
+    # ---------- RS v14s：恢复默认配置 + 高级页关于卡删除 ----------
+    from src.settings_dialog import SettingsDialog as _SD3
+    st_rs = _st("resetall.json")
+    # 抹黑一圈设置（覆盖多个分页）
+    for k, v in (("liquid_strength", 100), ("label_font_scale", 130),
+                 ("icon_hover_scale", 112), ("dock_icon", 56),
+                 ("dock_pad", 20), ("label_bold", True),
+                 ("liquid_fps_mode", "custom")):
+        st_rs.set_setting(k, v)
+    fw_rs = type("W3", (), {
+        "attached": False,
+        "calls": [],
+        "apply_label_style": lambda self: self.calls.append("label"),
+        "apply_hover_style": lambda self: self.calls.append("hover"),
+        "apply_liquid_style": lambda self: self.calls.append("liquid"),
+        "apply_dock_settings": lambda self: self.calls.append("dockset"),
+        "apply_dock_style": lambda self: self.calls.append("dockstyle"),
+        "set_desktop_hotkeys": lambda self, on: self.calls.append("hotkeys"),
+        "refresh_grid": lambda self: self.calls.append("grid"),
+    })()
+    dlg_rs = _SD3(fw_rs, st_rs, None)
+    check("RS 高级页有恢复默认按钮", hasattr(dlg_rs, "btn_reset_all"))
+    # 高级页不再有关于卡；关于页有版本标签（唯一一份）
+    check("RSb 版本标签在关于页（高级页不再重复）",
+          hasattr(dlg_rs, "lbl_about_version")
+          and dlg_rs.lbl_about_version.text() != "")
+    # 确认框：拒绝 -> 不动
+    from PySide6.QtWidgets import QMessageBox as _QMB
+    orig_exec = _QMB.exec
+    _QMB.exec = lambda self=None: _QMB.No
+    dlg_rs._reset_all_settings()
+    check("RSc 拒绝确认 -> 设置不变",
+          st_rs.get_setting("liquid_strength") == 100,
+          str(st_rs.get_setting("liquid_strength")))
+    # 确认 -> 全部回默认 + 钩子打了一遍
+    _QMB.exec = lambda self=None: _QMB.Yes
+    import src.settings_dialog as _sdmod
+    reopened = []
+    orig_open = _sdmod.open_settings
+    _sdmod.open_settings = lambda *a, **k: reopened.append(True)
+    try:
+        dlg_rs._reset_all_settings()
+        app.processEvents()      # singleShot(0) 的重开派发
+    finally:
+        _sdmod.open_settings = orig_open
+        _QMB.exec = orig_exec
+    check("RSd 设置全部回默认",
+          st_rs.get_setting("liquid_strength") == 60
+          and st_rs.get_setting("label_font_scale") == 100
+          and st_rs.get_setting("dock_icon") == 44
+          and st_rs.get_setting("dock_pad") == 10
+          and st_rs.get_setting("label_bold") is False
+          and st_rs.get_setting("liquid_fps_mode") == "medium",
+          "%s/%s/%s" % (st_rs.get_setting("liquid_strength"),
+                        st_rs.get_setting("dock_icon"),
+                        st_rs.get_setting("liquid_fps_mode")))
+    check("RSe 应用钩子全打到位",
+          set(fw_rs.calls) >= {"label", "hover", "liquid",
+                               "dockset", "dockstyle", "hotkeys", "grid"},
+          str(fw_rs.calls))
+    check("RSf 面板计划重开（单例重建）", reopened == [True])
+    dlg_rs.deleteLater()
+    # storage 层：layout/widgets 保留
+    st_keep = _st("resetkeep.json")
+    st_keep.set_setting("liquid_strength", 100)
+    st_keep._data["layout"] = [{"id": "k1", "type": "app", "col": 0,
+                                "row": 0, "app": {"kind": "app"}}]
+    st_keep.reset_settings()
+    check("RSg 图标排布保留（只重置配置）",
+          len(st_keep._data["layout"]) == 1
+          and st_keep.get_setting("liquid_strength") == 60)
+
     print()
     if failures:
         print("==== test_feedback_v14j: %d 项失败: %s" % (len(failures), failures))
