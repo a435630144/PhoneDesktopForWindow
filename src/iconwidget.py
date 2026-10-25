@@ -584,17 +584,22 @@ class AppIcon(QWidget):
             box = QRectF(3, 3, s - 6, s - 6)
         tint = folder_tint(self.entry)
         liquid = folder_liquid(self.entry)
-        if liquid and not self._paint_folder_lens(p, box, s, dpr):
-            # v14 反馈 10：文件夹颜色选「液态玻璃」——瓷砖本身也是一块玻璃。
-            # v14j：默认走真折射（_paint_folder_lens 按全局矩形从壁纸快照
-            # 裁 + 边缘位移）；壁纸快照不可用/表面被关时退回这个半透明白
-            # 渐变兜底（v14d 前的固定观感）。
-            grad = QLinearGradient(0, box.top(), 0, box.bottom())
-            grad.setColorAt(0.0, QColor(255, 255, 255, 58))
-            grad.setColorAt(1.0, QColor(255, 255, 255, 22))
-            p.setPen(QPen(QColor(255, 255, 255, 104), 1))
-            p.setBrush(QBrush(grad))
-            p.drawRoundedRect(box, s * 0.24, s * 0.24)
+        if liquid:
+            # v14j 反馈：液态瓷砖走真折射（_paint_folder_lens 按全局矩形
+            # 从壁纸快照裁 + 边缘位移）；壁纸快照不可用/表面被关时退回
+            # 半透明白渐变兜底（v14d 前的固定观感）。
+            # （2026-10-25 事故修复：原来写成 `if liquid and not lens():`
+            #  兜底 / else tint 渐变——镜头**成功**时也落进 else，把不透明
+            #  tint 渐变盖在折射上，瓷砖变成"白底"。拆成独立两层。）
+            if self._paint_folder_lens(p, box, s, dpr):
+                pass
+            else:
+                grad = QLinearGradient(0, box.top(), 0, box.bottom())
+                grad.setColorAt(0.0, QColor(255, 255, 255, 58))
+                grad.setColorAt(1.0, QColor(255, 255, 255, 22))
+                p.setPen(QPen(QColor(255, 255, 255, 104), 1))
+                p.setBrush(QBrush(grad))
+                p.drawRoundedRect(box, s * 0.24, s * 0.24)
         else:
             grad = QLinearGradient(0, box.top(), 0, box.bottom())
             grad.setColorAt(0.0, tint.lighter(135))

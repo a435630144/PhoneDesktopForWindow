@@ -345,6 +345,51 @@ def main(app):
           and sth2.get_setting("icon_hover_color") == "")
     dlg3.deleteLater()
 
+
+    # ---------- W3 液态瓷砖白底事故回归（角落采样！） ----------
+    # 事故：`if liquid and not lens(): 兜底 / else: tint 渐变` —— 镜头成功
+    # 时也落 else，不透明 tint 渐变（液态 tint=白 → 255→154 灰）盖住折射。
+    # 中心采样会被迷你图标遮住，必须采**角落**判中性灰。
+    class _Host(QWidget):
+        def __init__(self, storage):
+            super().__init__()
+            self.storage = storage
+
+    stw = _st("tile.json")
+    stw.layout.append({"id": "tl", "type": "folder", "col": 0, "row": 0,
+                       "page": 0, "name": "T", "tint": "liquid",
+                       "app": {"name": "T", "target": "T", "kind": "app"},
+                       "apps": [{"id": "m1", "name": "M", "target": "M",
+                                 "kind": "app"}]})
+    stw.save()
+    host = _Host(stw)
+    host.setAttribute(Qt.WA_DontShowOnScreen, True)
+    from src.iconwidget import AppIcon as _AI
+    ticon = _AI(stw.find_entry("tl"), 48, parent=host)
+    ticon._box_x = 4
+    ticon.setGeometry(0, 0, 64, 80)
+    from PySide6.QtGui import QImage as _QI, QPainter as _QP
+    from PySide6.QtCore import QRectF as _QRF
+    timg = _QI(ticon.size(), _QI.Format_ARGB32)
+    timg.fill(QColor(0, 0, 0, 0))
+    tp = _QP(timg)
+    ok_lens = ticon._paint_folder_lens(tp, _QRF(5, 3, 46, 46), 48, 1.0)
+    tp.end()
+    if ok_lens:
+        # 圆角内（box(5,3,46,46) r=11）：必须落在瓷砖实心区
+        corners = [timg.pixelColor(x, y) for x, y in
+                   ((18, 9), (38, 9), (18, 42), (38, 42))]
+        neutral = [c for c in corners if c.alpha() > 200
+                   and abs(c.red()-c.green()) <= 3
+                   and abs(c.green()-c.blue()) <= 3
+                   and 140 <= c.red() <= 250]
+        check("W3 液态瓷砖角落不是不透明白/灰（事故回归）",
+              len(neutral) == 0,
+              str([(c.red(), c.green(), c.blue()) for c in corners]))
+    else:
+        check("W3 液态瓷砖角落不是不透明白/灰（事故回归）", True, "skip-no-lens")
+    ticon.deleteLater()
+
     print()
     if failures:
         print("==== test_feedback_v14j: %d 项失败: %s" % (len(failures), failures))
