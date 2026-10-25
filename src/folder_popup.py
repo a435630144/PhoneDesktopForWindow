@@ -231,18 +231,15 @@ class ScrimWindow(QWidget):
     def _fade(self, start, end, ms, easing=None, done=None):
         for a in list(self._anims):
             a.stop()
-        anim = QPropertyAnimation(self, b"windowOpacity", self)
-        anim.setDuration(effects.dur(ms))
-        anim.setStartValue(float(start))
-        anim.setEndValue(float(end))
-        anim.setEasingCurve(easing if easing is not None
-                            else QEasingCurve.OutCubic)
-        if done is not None:
-            anim.finished.connect(done)
+        # v14p：FrameDriver（帧率档受控）
+        anim = effects.drive_property(
+            self, b"windowOpacity", float(start), float(end),
+            effects.dur(ms),
+            curve=easing if easing is not None else QEasingCurve.OutCubic,
+            done=done)
         anim.finished.connect(lambda: self._anims.remove(anim)
                               if anim in self._anims else None)
         self._anims.append(anim)
-        anim.start()
         return anim
 
     def _really_close(self):
@@ -715,11 +712,9 @@ class FolderPopup(QWidget):
         # 而 paintEvent 只按 zoom 缩放后的 rect 画玻璃——结果是"图标和工具
         # 栏都在、面板却只有中间一小块"。这里在没有动画在跑时强制归位，
         # 并把整窗刷一次（几何变了，旧脏区不足以覆盖新尺寸）。
-        anim = getattr(self, "_open_anim", None)
-        try:
-            running = anim is not None and anim.state() == QAbstractAnimation.Running
-        except RuntimeError:
-            running = False
+        # v14p：_open_anim 是 FrameDriver 列表——"在跑" = 任一在 Running
+        anims = getattr(self, "_open_anim", None) or []
+        running = any(a.state() == a.State.Running for a in anims)
         if not running:
             self._zoom = 1.0
         # 表单贴着弹窗：弹窗因成员增减改了大小，表单位置要跟着走
@@ -772,21 +767,17 @@ class FolderPopup(QWidget):
         """
         self.setWindowOpacity(0.0)
         self._zoom = ZOOM_FROM
-        group = QParallelAnimationGroup(self)
-        opa = QPropertyAnimation(self, b"windowOpacity", self)
-        opa.setDuration(effects.dur(180))
-        opa.setStartValue(0.0)
-        opa.setEndValue(1.0)
-        opa.setEasingCurve(QEasingCurve.OutCubic)
-        zoom = QPropertyAnimation(self, b"zoom", self)
-        zoom.setDuration(effects.dur(380))
-        zoom.setStartValue(float(ZOOM_FROM))
-        zoom.setEndValue(1.0)
-        zoom.setEasingCurve(effects.spring_curve(0.8, 380))
-        group.addAnimation(opa)
-        group.addAnimation(zoom)
-        group.start()
-        self._open_anim = group  # 持有引用，避免被 GC
+        # v14p：FrameDriver（帧率档受控）替代 QParallelAnimationGroup；
+        # 组的 finished 语义 = 较长者（zoom 380ms）完成
+        anims = [
+            effects.drive_property(self, b"windowOpacity", 0.0, 1.0,
+                                   effects.dur(180),
+                                   curve=QEasingCurve.OutCubic),
+            effects.drive_property(self, b"zoom", float(ZOOM_FROM), 1.0,
+                                   effects.dur(380),
+                                   curve=effects.spring_curve(0.8, 380)),
+        ]
+        self._open_anim = anims   # 持有引用，避免被 GC
         self.show()
 
     def close(self):
@@ -799,20 +790,18 @@ class FolderPopup(QWidget):
         if self._editor is not None:
             self._editor.close()
             self._editor = None
-        group = QParallelAnimationGroup(self)
-        opa = QPropertyAnimation(self, b"windowOpacity", self)
-        opa.setDuration(effects.dur(180))
-        opa.setStartValue(float(self.windowOpacity()))
-        opa.setEndValue(0.0)
-        opa.setEasingCurve(QEasingCurve.InCubic)
-        zoom = QPropertyAnimation(self, b"zoom", self)
-        zoom.setDuration(effects.dur(200))
-        zoom.setStartValue(float(self._zoom))
-        zoom.setEndValue(float(ZOOM_TO))
-        zoom.setEasingCurve(effects.spring_curve(1.0, 200))
-        group.finished.connect(self._really_close)
-        group.start()
-        self._close_anim = group  # 持有引用，避免被 GC
+        # v14p：FrameDriver（帧率档受控）；zoom(200ms) 是长者 → 完成即真关
+        anims = [
+            effects.drive_property(self, b"windowOpacity",
+                                   float(self.windowOpacity()), 0.0,
+                                   effects.dur(180),
+                                   curve=QEasingCurve.InCubic),
+            effects.drive_property(self, b"zoom", float(self._zoom),
+                                   float(ZOOM_TO), effects.dur(200),
+                                   curve=effects.spring_curve(1.0, 200),
+                                   done=self._really_close),
+        ]
+        self._close_anim = anims   # 持有引用，避免被 GC
 
     def _really_close(self):
         try:

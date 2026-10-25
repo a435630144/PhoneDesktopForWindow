@@ -179,6 +179,9 @@ def main(app):
                    for eid in ("a", "b")],))
 
     # ---------- E6：反馈 10——提取到只剩 1 个成员 → 解散 + 弹窗关闭 ----------
+    # v14p：FrameDriver 按真实墙钟播收起动画（~200ms；旧 Qt 动画在
+    # offscreen 会瞬完，等 150ms 就够——现在按动画时长等）
+    settle(app, 450)
     check("E6 只剩 1 个成员时文件夹自动解除", st.find_entry("f") is None,
           "f=%s" % (st.find_entry("f"),))
     check("E6 弹窗随解散自动关闭", w._popup is None)

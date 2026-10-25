@@ -200,11 +200,17 @@ def main():
           anim is not None
           and anim.easingCurve().type() == effects.spring_curve(1.0, 420).type(),
           str(anim.easingCurve().type() if anim else None))
-    if anim is not None:
-        anim.stop()
-
+    # v14p：vis 与 mid 都在 stop **之前**取样——"翻页期间"语义。
+    # （FrameDriver.stop 发 finished 会立刻 settle 收起旧页；旧
+    # QVariantAnimation 在 offscreen 瞬完、stop 是无操作——两种时序
+    # 都要求取样先行。）
     vis_pages = {grid_flow.entry_page(st, st.find_entry(eid))
                  for eid, icon in w.icons.items() if not icon.isHidden()}
+    w._on_flip_step(0.5)
+    mid = {eid: (icon.x(), icon.y()) for eid, icon in w.icons.items()
+           if not icon.isHidden()}
+    if anim is not None:
+        anim.stop()
     check("F8 翻页期间两页都可见（旧页没被提前藏）",
           vis_pages == {0, 1}, str(vis_pages))
     check("F8 没有第三页残留", 2 not in vis_pages, str(vis_pages))
@@ -213,9 +219,6 @@ def main():
     # 顺序有讲究：图标的 `pos()` 是**帧**位置（含瞬移），`_entry_pos` 是
     # **落定**位置——所以中途只能取样前者、终点只能取样后者（第一版中途
     # 就取 `_entry_pos`，start/mid/final 里 mid == final，恒不成立）。
-    w._on_flip_step(0.5)
-    mid = {eid: (icon.x(), icon.y()) for eid, icon in w.icons.items()
-           if not icon.isHidden()}
     eid0 = next(e for e in start if grid_flow.entry_page(st, st.find_entry(e)) == 0)
     ent0 = st.find_entry(eid0)
     sx = start[eid0][0]

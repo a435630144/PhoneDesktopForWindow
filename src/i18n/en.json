@@ -191,7 +191,7 @@
   "settings.appearance.liquid.band.title": "Refraction band",
   "settings.appearance.liquid.fps.custom": "Custom",
   "settings.appearance.liquid.fps.high": "High (60 fps)",
-  "settings.appearance.liquid.fps.hint": "Global animation frame rate shared by liquid-glass recomputes and self-driven animations; lower saves power, higher tracks closer",
+  "settings.appearance.liquid.fps.hint": "Global frame rate shared by icon/widget movement, page flips, folder open/close, Dock hover and glass recomputes; lower saves power, higher tracks closer",
   "settings.appearance.liquid.fps.low": "Low (30 fps)",
   "settings.appearance.liquid.fps.medium": "Medium (45 fps)",
   "settings.appearance.liquid.fps.title": "Render rate",

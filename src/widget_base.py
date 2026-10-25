@@ -225,15 +225,12 @@ class FloatingWidget(QWidget):
         if effects.reduced_motion():
             self.move(tx, ty)
             return
-        anim = QPropertyAnimation(self, b"pos", self)
-        anim.setDuration(effects.dur(duration))
-        anim.setStartValue(self.pos())
-        anim.setEndValue(QPoint(tx, ty))
-        anim.setEasingCurve(effects.spring_curve(damping, duration))
+        anim = effects.drive_property(
+            self, b"pos", self.pos(), QPoint(tx, ty), effects.dur(duration),
+            curve=effects.spring_curve(damping, duration))
         anim.finished.connect(lambda: self._anims.remove(anim)
                               if anim in self._anims else None)
         self._anims.append(anim)
-        anim.start()
         return anim
 
     # ---------- 形态 ----------
@@ -271,18 +268,15 @@ class FloatingWidget(QWidget):
             return
         for a in list(self._anims):
             a.stop()
-        anim = QPropertyAnimation(self, b"windowOpacity", self)
-        anim.setDuration(effects.dur(ms))
-        anim.setStartValue(float(start))
-        anim.setEndValue(float(end))
-        anim.setEasingCurve(easing if easing is not None
-                            else effects.spring_curve(1.0, ms))
-        if done is not None:
-            anim.finished.connect(done)
+        anim = effects.drive_property(
+            self, b"windowOpacity", float(start), float(end),
+            effects.dur(ms),
+            curve=easing if easing is not None
+            else effects.spring_curve(1.0, ms),
+            done=done)
         anim.finished.connect(lambda: self._anims.remove(anim)
                               if anim in self._anims else None)
         self._anims.append(anim)
-        anim.start()
         return anim
 
     def close(self):
@@ -805,14 +799,10 @@ class FloatingWidget(QWidget):
         self._snapping = True
         for a in list(self._anims):
             a.stop()
-        anim = QPropertyAnimation(self, b"pos", self)
-        anim.setDuration(effects.dur(240))
-        anim.setStartValue(self.pos())
-        anim.setEndValue(QPoint(tx, ty))
-        anim.setEasingCurve(effects.spring_curve(0.8, 240))
-        anim.finished.connect(self._on_snapped)
+        anim = effects.drive_property(
+            self, b"pos", self.pos(), QPoint(tx, ty), effects.dur(240),
+            curve=effects.spring_curve(0.8, 240), done=self._on_snapped)
         self._anims.append(anim)
-        anim.start()
 
     def _on_snapped(self):
         self._snapping = False

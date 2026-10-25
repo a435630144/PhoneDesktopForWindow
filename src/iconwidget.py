@@ -340,16 +340,16 @@ class AppIcon(QWidget):
         for a in list(self._anims):
             if a.propertyName() == prop:
                 a.stop()
-                self._anims.remove(a)
-        anim = QPropertyAnimation(self, prop, self)
-        anim.setDuration(effects.dur(duration))
-        anim.setStartValue(start)
-        anim.setEndValue(end)
-        anim.setEasingCurve(easing if easing is not None else effects.smooth_out())
+                if a in self._anims:      # stop 发 finished 可能已移走
+                    self._anims.remove(a)
+        # v14p：FrameDriver——时钟走全局渲染频率档（QPropertyAnimation
+        # 的 Qt 内部时钟固定 ~60fps，设置管不到；接口对齐 _anims 管理）
+        anim = effects.drive_property(
+            self, prop, start, end, effects.dur(duration),
+            curve=easing if easing is not None else effects.smooth_out())
         anim.finished.connect(lambda: self._anims.remove(anim)
                               if anim in self._anims else None)
         self._anims.append(anim)
-        anim.start()
         return anim
 
     def pulse(self, scale=1.08, up_ms=90):
@@ -366,13 +366,12 @@ class AppIcon(QWidget):
         for a in list(self._anims):
             if a.propertyName() == b"press_scale":
                 a.stop()
-                self._anims.remove(a)
-        up = QPropertyAnimation(self, b"press_scale", self)
-        up.setDuration(effects.dur(up_ms))
-        up.setStartValue(float(self._press_scale))
-        up.setEndValue(float(scale))
-        up.setEasingCurve(QEasingCurve.OutCubic)
-        self._anims.append(up)
+                if a in self._anims:      # stop 发 finished 可能已移走
+                    self._anims.remove(a)
+        # v14p：FrameDriver（帧率档受控）
+        up = effects.drive_property(
+            self, b"press_scale", float(self._press_scale), float(scale),
+            effects.dur(up_ms), curve=QEasingCurve.OutCubic)
 
         def _back():
             if up in self._anims:
@@ -382,7 +381,7 @@ class AppIcon(QWidget):
                           effects.spring_curve(1.0, 240))
 
         up.finished.connect(_back)
-        up.start()
+        self._anims.append(up)
 
     def appear_in(self, delay_ms=0):
         """错峰淡入（rebuild 后 iOS 风依次落位）：缩放 0.7->1 + 渐显。
@@ -417,7 +416,8 @@ class AppIcon(QWidget):
         for a in list(self._anims):
             if a.propertyName() == b"pos":
                 a.stop()
-                self._anims.remove(a)
+                if a in self._anims:      # stop 发 finished 可能已移走
+                    self._anims.remove(a)
         if (self.pos().x(), self.pos().y()) == (tx, ty):
             return
         if effects.reduced_motion():

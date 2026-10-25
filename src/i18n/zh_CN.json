@@ -191,7 +191,7 @@
   "settings.appearance.liquid.band.title": "折射带宽",
   "settings.appearance.liquid.fps.custom": "自定义",
   "settings.appearance.liquid.fps.high": "高（60 帧）",
-  "settings.appearance.liquid.fps.hint": "全局动画帧率：液态玻璃重算与自驱动动画共用的每秒帧数；低更省电、高更跟手",
+  "settings.appearance.liquid.fps.hint": "全局动画帧率：图标/组件移动、翻页、文件夹展开、Dock 悬停与液态玻璃重算共用；低更省电、高更跟手",
   "settings.appearance.liquid.fps.low": "低（30 帧）",
   "settings.appearance.liquid.fps.medium": "中（45 帧）",
   "settings.appearance.liquid.fps.title": "渲染频率",

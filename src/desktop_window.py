@@ -1429,15 +1429,13 @@ class DesktopWindow(QWidget):
             # 图标与组件读同一份 → 同向同速同曲线，这就是反馈 6 要的接续感。
             grid_flow.begin_flip(page, direction)
             self._show_flip_pages((old, page))
-            anim = QVariantAnimation(self)
-            anim.setStartValue(0.0)
-            anim.setEndValue(1.0)
-            anim.setDuration(effects.dur(FLIP_MS))
-            anim.setEasingCurve(effects.spring_curve(1.0, FLIP_MS))
-            anim.valueChanged.connect(self._on_flip_step)
-            anim.finished.connect(self._on_flip_done)
+            # v14p：FrameDriver——翻页动画走全局渲染频率档
+            anim = effects.drive(
+                self, b"flip", self._on_flip_step, 0.0, 1.0,
+                effects.dur(FLIP_MS),
+                curve=effects.spring_curve(1.0, FLIP_MS),
+                done=self._on_flip_done)
             self._flip_anim = anim
-            anim.start()
             # 立刻画一帧起点（新页图标在屏外、旧页在原位），避免"先跳一格再滑"
             self._apply_flip_frame()
         else:

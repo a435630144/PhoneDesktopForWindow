@@ -18,8 +18,11 @@
 全部只用 Qt 自带模块，零第三方依赖，不影响打包体积。
 """
 import math
+import time
 
-from PySide6.QtCore import QEasingCurve, QPointF, QRect, QRectF, Qt
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QPoint,
+                            QPointF, QRect, QRectF, QObject, QTimer,
+                            Signal, Qt)
 from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QLinearGradient,
                            QPainter, QPainterPath, QPen, QPixmap)
 
@@ -225,3 +228,137 @@ def paint_glass(p: QPainter, rect: QRect, backdrop: QPixmap,
     p.setPen(QPen(QColor(255, 255, 255, theme.GLASS_BORDER), 1.0))
     p.setBrush(Qt.NoBrush)
     p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+
+
+# ---------------------------------------------------------------- 帧率驱动器（v14p）
+
+def frame_interval(storage=None) -> int:
+    """全局动画帧率对应的 tick 间隔（ms，夹 4~66）。
+
+    帧率档（设置 ▸ 外观 ▸ 渲染频率）是**全局**语义：液态玻璃重算、
+    monitor 等自驱动循环、以及 FrameDriver 驱动的所有属性动画共用。
+    Qt 的 QPropertyAnimation 走内部统一时钟（固定 ~60fps，私有 API
+    无法改频），所以我们的动画一律用 FrameDriver——帧率档真正管到
+    图标 hover/落位弹簧、组件移动、翻页、文件夹开合、Dock 悬停。
+    """
+    fps = 60.0
+    try:
+        from . import liquid_glass
+        fps = float(liquid_glass.live_fps(storage))
+    except Exception:            # noqa: BLE001 —— 读不到用 60
+        fps = 60.0
+    fps = max(24.0, min(240.0, fps))
+    return max(4, min(66, round(1000.0 / fps)))
+
+
+def _lerp(a, b, k: float):
+    """按进度插值（float/int/QPoint/QPointF；QColor 走 rgb）。"""
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a + (b - a) * k
+    try:
+        if isinstance(a, QColor) and isinstance(b, QColor):
+            return QColor(int(a.red() + (b.red() - a.red()) * k),
+                          int(a.green() + (b.green() - a.green()) * k),
+                          int(a.blue() + (b.blue() - a.blue()) * k),
+                          int(a.alpha() + (b.alpha() - a.alpha()) * k))
+        pa, pb = QPointF(a), QPointF(b)
+        out = QPointF(pa.x() + (pb.x() - pa.x()) * k,
+                      pa.y() + (pb.y() - pa.y()) * k)
+        if isinstance(a, QPoint.__class__) or isinstance(a, QPoint):
+            return QPoint(int(round(out.x())), int(round(out.y())))
+        return out
+    except Exception:            # noqa: BLE001 —— 未知类型退化为端点
+        return b if k >= 0.5 else a
+
+
+class FrameDriver(QObject):
+    """QPropertyAnimation 的**帧率受控**等价物（v14p）。
+
+    接口对齐（propertyName/stop/finished/start），现有 `_anims` 列表
+    管理代码（按属性停旧、防 GC、finished 清理）原样兼容。区别只在
+    时钟：tick 间隔取 `frame_interval(owner.storage)`——设置里的渲染
+    频率档由此真正作用到每一个动画。
+    """
+
+    finished = Signal()
+
+    def __init__(self, owner, name, apply, start, end, ms, curve=None):
+        super().__init__(owner)
+        self._name = name.encode() if isinstance(name, str) else bytes(name)
+        self._apply = apply
+        self._start = start
+        self._end = end
+        self._ms = max(1.0, float(ms))
+        # 调用方两种传法都有：QEasingCurve 实例（spring_curve）或枚举常量
+        # （QEasingCurve.OutCubic——QPropertyAnimation 会隐式转换，这里归一）
+        if curve is None:
+            curve = QEasingCurve(QEasingCurve.Linear)
+        elif not isinstance(curve, QEasingCurve):
+            curve = QEasingCurve(curve)
+        self._curve = curve
+        self._t0 = time.monotonic()
+        self._done = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(frame_interval(getattr(owner, "storage",
+                                                       None)))
+        self._timer.timeout.connect(self._tick)
+
+    # 接口补齐：duration()/state()——部分调用方/测试沿 QPropertyAnimation
+    # 习惯查询（v7e 测试的 state()、翻页测试的 duration()）
+    State = QAbstractAnimation.State
+
+    def duration(self) -> int:
+        return int(self._ms)
+
+    def easingCurve(self) -> QEasingCurve:
+        return self._curve
+
+    def state(self):
+        return (QAbstractAnimation.State.Running if self._timer.isActive()
+                else QAbstractAnimation.State.Stopped)
+
+    def propertyName(self):
+        return self._name
+
+    def start(self):
+        self._apply(_lerp(self._start, self._end,
+                          self._curve.valueForProgress(0.0)))
+        self._timer.start()
+
+    def stop(self):
+        """中途停止（与 Qt 同语义：仍发 finished）。"""
+        if self._done:
+            return
+        self._done = True
+        self._timer.stop()
+        self.finished.emit()
+
+    def _tick(self):
+        k = (time.monotonic() - self._t0) * 1000.0 / self._ms
+        if k >= 1.0:
+            self._done = True
+            self._timer.stop()
+            self._apply(self._end)
+            self.finished.emit()
+            return
+        self._apply(_lerp(self._start, self._end,
+                          self._curve.valueForProgress(k)))
+
+
+def drive(owner, name, apply, start, end, ms, curve=None, done=None):
+    """启动一个帧率受控的值动画（name 仅作 propertyName 标识）。"""
+    d = FrameDriver(owner, name, apply, start, end, ms, curve)
+    if done is not None:
+        d.finished.connect(done)
+    d.start()
+    return d
+
+
+def drive_property(owner, prop, start, end, ms, curve=None, done=None):
+    """驱动 owner 的 Qt/Python 属性（prop 可 bytes/str）。"""
+    name = prop.decode() if isinstance(prop, bytes) else str(prop)
+
+    def _set(v):
+        owner.setProperty(name, v)
+
+    return drive(owner, prop, _set, start, end, ms, curve, done)

@@ -871,13 +871,11 @@ class DockWindow(QWidget):
         if effects.reduced_motion():
             self._set_hover_t(to)
             return
-        anim = QPropertyAnimation(self, b"hover_t", self)
-        anim.setDuration(effects.dur(HOVER_MS))
-        anim.setStartValue(self._hover_t)
-        anim.setEndValue(float(to))
-        # 弹簧曲线（项目铁律：禁 OutBack/OutCubic 近似）
-        anim.setEasingCurve(effects.spring_curve(1.0, HOVER_MS))
-        anim.start()
+        # v14p：FrameDriver（帧率档受控）；弹簧曲线（禁 OutBack/OutCubic 近似）
+        anim = effects.drive_property(
+            self, b"hover_t", self._hover_t, float(to),
+            effects.dur(HOVER_MS),
+            curve=effects.spring_curve(1.0, HOVER_MS))
         self._anim = anim
 
     def _spread(self, index: int) -> int:
