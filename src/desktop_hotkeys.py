@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""桌面快捷键：Ctrl+C / Ctrl+V（v11 反馈 31）。
+"""桌面快捷键：Ctrl+C / Ctrl+V / Delete / Ctrl+A / Ctrl+Z。
+
+v11 反馈 31 只做了 Ctrl+C/V；2026-10-25 用户反馈「还是有很多常用的快捷方式
+不起作用……delete 也用不了，删除图标用的」——把 keyPressEvent 里那些
+**永远触发不了的死代码分支**（Delete 删除选中 / Ctrl+A 全选当前页 /
+Ctrl+Z 撤销布局）一并接入钩子。
 
 ## 为什么不能靠 Qt 的 keyPressEvent
 
@@ -44,6 +49,9 @@ WM_SYSKEYUP = 0x0105
 VK_CONTROL = 0x11
 VK_C = 0x43
 VK_V = 0x56
+VK_A = 0x41
+VK_Z = 0x5A
+VK_DELETE = 0x2E
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -200,7 +208,13 @@ class DesktopHotkeys(QObject):
                  own_hwnds: Optional[Callable[[], Iterable[int]]] = None,
                  can_copy: Optional[Callable[[], bool]] = None,
                  can_paste: Optional[Callable[[], bool]] = None,
-                 target_check: Optional[Callable[[], bool]] = None):
+                 target_check: Optional[Callable[[], bool]] = None,
+                 on_delete: Optional[Callable] = None,
+                 on_select_all: Optional[Callable] = None,
+                 on_undo: Optional[Callable] = None,
+                 can_delete: Optional[Callable[[], bool]] = None,
+                 can_select_all: Optional[Callable[[], bool]] = None,
+                 can_undo: Optional[Callable[[], bool]] = None):
         super().__init__(parent)
         self.on_copy = on_copy or (lambda: None)
         self.on_paste = on_paste or (lambda: None)
@@ -208,6 +222,15 @@ class DesktopHotkeys(QObject):
         self._can_copy = can_copy or (lambda: True)
         self._can_paste = can_paste or (lambda: True)
         self._target_check = target_check
+        # v14k4：Delete / Ctrl+A / Ctrl+Z。**安全缺省 = False**（没接线就
+        # 不吞键）——C/V 的缺省 True 是历史行为，新键宁可漏不可误吞：
+        # Delete 误吞会把别的程序里的删除键吃掉。
+        self.on_delete = on_delete or (lambda: None)
+        self.on_select_all = on_select_all or (lambda: None)
+        self.on_undo = on_undo or (lambda: None)
+        self._can_delete = can_delete or (lambda: False)
+        self._can_select_all = can_select_all or (lambda: False)
+        self._can_undo = can_undo or (lambda: False)
         self._hook = None
         self._proc = None
         self._last_at = 0.0
@@ -264,10 +287,13 @@ class DesktopHotkeys(QObject):
         独立成方法是为了能直接单测（真实钩子需要全局键盘事件才能触发）。
         `vk` 缺省时退化为状态查询（仅测试 / 非常规路径）。
         """
-        if not ctrl_down():
-            return False
+        ctrl = ctrl_down()
         vk = int(vk) or self._pressed_vk()
-        if vk not in (VK_C, VK_V):
+        if ctrl:
+            if vk not in (VK_C, VK_V, VK_A, VK_Z):
+                return False
+        elif vk != VK_DELETE:
+            # Delete 是唯一不带 Ctrl 的桌面键（原生桌面同语义）
             return False
         # S7：重复保护必须放在 target 判定**之后**——放在前面的话，桌面动作
         # 触发后的 350ms 窗口内用户切到别的应用按 Ctrl+C/V 会被无条件吞掉，
@@ -291,19 +317,47 @@ class DesktopHotkeys(QObject):
             self._last_at = now
             QTimer.singleShot(0, self._do_copy)
             return True
+        if vk == VK_V:
+            try:
+                if not self._can_paste():
+                    return False
+            except Exception:      # noqa: BLE001
+                return False
+            self._last_at = now
+            QTimer.singleShot(0, self._do_paste)
+            return True
+        if vk == VK_DELETE:
+            try:
+                if not self._can_delete():
+                    return False
+            except Exception:      # noqa: BLE001
+                return False
+            self._last_at = now
+            QTimer.singleShot(0, self._do_delete)
+            return True
+        if vk == VK_A:
+            try:
+                if not self._can_select_all():
+                    return False
+            except Exception:      # noqa: BLE001
+                return False
+            self._last_at = now
+            QTimer.singleShot(0, self._do_select_all)
+            return True
+        # VK_Z
         try:
-            if not self._can_paste():
+            if not self._can_undo():
                 return False
         except Exception:      # noqa: BLE001
             return False
         self._last_at = now
-        QTimer.singleShot(0, self._do_paste)
+        QTimer.singleShot(0, self._do_undo)
         return True
 
     def _pressed_vk(self) -> int:
         """当前按下的键（钩子里从 KBDLLHOOKSTRUCT 取更准，这里用状态查询兜底）。"""
         try:
-            for vk in (VK_C, VK_V):
+            for vk in (VK_C, VK_V, VK_A, VK_Z, VK_DELETE):
                 if _user32().GetAsyncKeyState(vk) & 0x8000:
                     return vk
         except Exception:      # noqa: BLE001
@@ -319,5 +373,23 @@ class DesktopHotkeys(QObject):
     def _do_paste(self):
         try:
             self.on_paste()
+        except Exception:      # noqa: BLE001
+            pass
+
+    def _do_delete(self):
+        try:
+            self.on_delete()
+        except Exception:      # noqa: BLE001
+            pass
+
+    def _do_select_all(self):
+        try:
+            self.on_select_all()
+        except Exception:      # noqa: BLE001
+            pass
+
+    def _do_undo(self):
+        try:
+            self.on_undo()
         except Exception:      # noqa: BLE001
             pass

@@ -3944,6 +3944,15 @@ class DesktopWindow(QWidget):
             own_hwnds=lambda: own,
             can_copy=self.has_selection,
             can_paste=self.clipboard_has_files,
+            # v14k4：Delete / Ctrl+A / Ctrl+Z——keyPressEvent 里的三个死代码
+            # 分支（NOACTIVATE 窗口收不到键盘）由钩子接管路由到这里
+            on_delete=self._remove_selected,
+            can_delete=self.has_selection,
+            on_select_all=self._select_all,
+            can_select_all=lambda: bool(
+                [i for i in self.icons.values() if not i.isHidden()]),
+            on_undo=self._undo_layout,
+            can_undo=lambda: bool(self._undo_stack),
         )
         self._hotkeys.install()
 

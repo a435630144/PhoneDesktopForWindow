@@ -20,6 +20,9 @@
   K9  卸载幂等；非 Windows 上 install() 返回 False
   K10 copy_selection 只把**真实存在的文件**写进剪贴板（本地文件 URL）
   K11 paste_from_clipboard 转发到 _paste_files（右键「粘贴」同一条路）
+  K12-K17 v14k4：Delete（无 Ctrl，删选中）/ Ctrl+A（全选当前页）/
+         Ctrl+Z（撤销布局）接入钩子——原 keyPressEvent 死代码分支；
+         缺省不接线时不吞键；长按节流同 C/V
 
 运行：python tests/test_desktop_hotkeys.py   （offscreen）
 """
@@ -203,6 +206,71 @@ def main(app):
 
     if st_path.exists():
         st_path.unlink()
+    # ---------- K12-K17 v14k4：Delete / Ctrl+A / Ctrl+Z ----------
+    calls2 = []
+    hk3 = dh.DesktopHotkeys(
+        on_delete=lambda: calls2.append("delete"),
+        on_select_all=lambda: calls2.append("selectall"),
+        on_undo=lambda: calls2.append("undo"),
+        own_hwnds=lambda: [],
+        can_delete=lambda: True,
+        can_select_all=lambda: True,
+        can_undo=lambda: True,
+        target_check=lambda: True,
+    )
+    try:
+        dh.ctrl_down = lambda: False
+        hk3._last_at = 0.0
+        check("K12 Delete（无 Ctrl）条件齐备 -> 接管",
+              hk3._on_keydown(dh.VK_DELETE) is True)
+        QTest.qWait(30)
+        check("K12b 删除动作派发", calls2 == ["delete"], str(calls2))
+        dh.ctrl_down = lambda: True     # Ctrl+Delete：Ctrl 组合里没有它
+        hk3._last_at = 0.0
+        check("K12c Ctrl+Delete 不接管（放给系统）",
+              hk3._on_keydown(dh.VK_DELETE) is False and calls2 == ["delete"])
+        dh.ctrl_down = lambda: True
+        hk3._last_at = 0.0
+        check("K13 Ctrl+A 条件齐备 -> 接管", hk3._on_keydown(dh.VK_A) is True)
+        hk3._last_at = 0.0
+        check("K13b Ctrl+Z 条件齐备 -> 接管", hk3._on_keydown(dh.VK_Z) is True)
+        QTest.qWait(30)
+        check("K13c 全选/撤销派发",
+              calls2 == ["delete", "selectall", "undo"], str(calls2))
+        hk3._can_undo = lambda: False
+        hk3._last_at = 0.0
+        check("K14 没有可撤销 -> Ctrl+Z 不接管",
+              hk3._on_keydown(dh.VK_Z) is False)
+        hk3._can_delete = lambda: False
+        dh.ctrl_down = lambda: False
+        hk3._last_at = 0.0
+        check("K15 没有选中项 -> Delete 不接管",
+              hk3._on_keydown(dh.VK_DELETE) is False)
+        check("K15b 不接管时无动作", calls2[-1] != "delete")
+        hk3._can_delete = lambda: True
+        hk3._last_at = 0.0
+        hk3._on_keydown(dh.VK_DELETE)
+        QTest.qWait(30)                  # 第一次派发执行
+        before = calls2.count("delete")
+        check("K16 长按 Delete 只删一次（节流吞重复）",
+              hk3._on_keydown(dh.VK_DELETE) is True and
+              calls2.count("delete") == before, str(calls2))
+    finally:
+        dh.ctrl_down = orig_ctrl
+
+    # ---------- K17 窗口接线（回调落到窗口方法） ----------
+    st_h = Storage(path=str(Path(tempfile.gettempdir()) / "test_hotkeys_w.json"))
+    wh = DesktopWindow(st_h)
+    wh.setup_desktop_hotkeys()
+    check("K17 钩子接了删除/全选/撤销回调",
+          wh._hotkeys is not None
+          and callable(wh._hotkeys.on_delete)
+          and callable(wh._hotkeys.on_select_all)
+          and callable(wh._hotkeys.on_undo)
+          and wh._hotkeys._can_undo() is False)
+    wh._hotkeys.uninstall()
+    wh.close()
+
     if real.exists():
         real.unlink()
 
