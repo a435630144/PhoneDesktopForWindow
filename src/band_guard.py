@@ -58,6 +58,73 @@ class BandGuard(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._check)
+        # v14n：**事件驱动**归位（用户反馈：后台运行切到桌面偶发"接管
+        # 退出、原生右键、无图标，过一会儿又恢复"——那是 z-order 被系统
+        # 扰动（显示桌面/最小化/切换）到下一次 1.5s 轮询之间的盲窗：
+        # 整理层已被压下、原生图标还扣着。SetWinEventHook 监听前台切换
+        # 与 z-order 重排，扰动瞬间立即 _check，盲窗缩到几十毫秒。
+        self._event_hook = None
+        self._reorder_hook = None
+
+    # ---------- 事件驱动钩子（v14n） ----------
+    def install_event_hook(self):
+        """装 WinEvent 钩子（显式调用：生产路径用；测试默认不装，
+        免得与 DestroyWindow 类流程互相干扰）。"""
+        import ctypes
+        try:
+            u = ctypes.windll.user32
+            u.SetWinEventHook.restype = ctypes.c_void_p
+            u.SetWinEventHook.argtypes = [ctypes.c_uint, ctypes.c_uint,
+                                          ctypes.c_void_p, ctypes.c_void_p,
+                                          ctypes.c_uint, ctypes.c_uint,
+                                          ctypes.c_uint]
+            u.UnhookWinEvent.argtypes = [ctypes.c_void_p]
+            proto = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint,
+                                       ctypes.c_void_p, ctypes.c_long,
+                                       ctypes.c_long, ctypes.c_uint,
+                                       ctypes.c_uint)
+            # 回调对象必须随实例保活——被 GC 就是悬空函数指针
+            # （系统事件一来就跳进已释放的代码，进程直接崩）
+            self._event_proc = proto(self._on_win_event)
+            EVENT_SYSTEM_FOREGROUND = 0x0003
+            EVENT_OBJECT_REORDER = 0x8004
+            WINEVENT_OUTOFCONTEXT = 0
+            self._event_hook = u.SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None,
+                self._event_proc, 0, 0, WINEVENT_OUTOFCONTEXT)
+            self._reorder_hook = u.SetWinEventHook(
+                EVENT_OBJECT_REORDER, EVENT_OBJECT_REORDER, None,
+                self._event_proc, 0, 0, WINEVENT_OUTOFCONTEXT)
+        except Exception:        # noqa: BLE001 —— 钩子装不上退化为纯轮询
+            self._event_hook = None
+
+    def shutdown(self):
+        """撤事件钩子（轮询定时器由 Qt 父子关系管理）。"""
+        import ctypes
+        try:
+            u = ctypes.windll.user32
+            if self._event_hook:
+                u.UnhookWinEvent(self._event_hook)
+            if getattr(self, "_reorder_hook", None):
+                u.UnhookWinEvent(self._reorder_hook)
+        except Exception:        # noqa: BLE001
+            pass
+        self._event_hook = None
+        self._reorder_hook = None
+
+    def _on_win_event(self, hook, event, hwnd, id_object, id_child,
+                      thread, time_ms):
+        """WinEvent 回调：扰动（前台切换 / z-order 重排）→ 立即归位。
+
+        回调在安装线程（主线程）的消息循环里投递，与 1.5s 轮询同一线程，
+        直接跑 _check 是安全的（几次 Win32 查询，毫秒级）；事件连发时
+        多跑几轮也只是一点冗余查询。唯一纪律：绝不抛（钩子里抛会砸掉
+        系统事件派发）。
+        """
+        try:
+            self._check()
+        except Exception:        # noqa: BLE001
+            pass
 
     # ---------- 跟踪管理 ----------
     def track(self, widget, below_hwnd: int = 0,

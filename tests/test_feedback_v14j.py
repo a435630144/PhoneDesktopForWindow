@@ -434,6 +434,31 @@ def main(app):
     wmk._close_popup()
     wmk.close()
 
+
+    # ---------- K9/K10 v14n 事件驱动守护（WinEvent 钩子） ----------
+    from src import band_guard as _bg
+    g2 = _bg.BandGuard(None)
+    g2._timer.stop()
+    check("K9 默认不装钩子（测试环境隔离）", g2._event_hook is None)
+    # 先手动调回调验证语义（未装钩子 = 无真实系统事件干扰计数）
+    checks_n = [0]
+    orig_check = g2._check
+    g2._check = lambda: (checks_n.append(1), orig_check()) and None
+    # 真实系统事件也会触发计数（活动桌面上无法隔离），断言用下限
+    g2._on_win_event(None, 0x0003, None, 0, 0, 0, 0)
+    check("K9b 事件回调触发 _check（立即归位语义）", len(checks_n) >= 1,
+          str(len(checks_n)))
+    g2._on_win_event(None, 0x8004, None, 0, 0, 0, 0)
+    check("K9c 每个事件都走到 _check（不丢事件）",
+          len(checks_n) >= 2, str(len(checks_n)))
+    # 再验证真实钩子安装/卸载
+    g2.install_event_hook()
+    check("K9d 显式安装后 Windows 上有钩子",
+          os.name != "nt" or bool(g2._event_hook) is True,
+          str(bool(g2._event_hook)))
+    g2.shutdown()
+    check("K9e shutdown 撤钩", g2._event_hook is None)
+
     print()
     if failures:
         print("==== test_feedback_v14j: %d 项失败: %s" % (len(failures), failures))

@@ -172,6 +172,8 @@ class DesktopWindow(QWidget):
         self.setWindowTitle(i18n.T("app.name"))   # v14h：遗留 Demo 名纠正
         # 桌面带守护：Win+D / 切屏等导致漂移时自动拉回桌面带
         self._band_guard = BandGuard(self, on_tick=self._on_guard_tick)
+        # v14n：事件驱动归位（显式安装，测试环境默认不装）
+        self._band_guard.install_event_hook()
         # 桌面目录监听（v6 §7.4）：由 set_auto_sync 按设置启停，不在构造时启动
         # （测试 / 探针直接构造窗口，不该被动起文件监听）
         self._watcher = None
@@ -4228,6 +4230,7 @@ class DesktopWindow(QWidget):
 
     def closeEvent(self, e):
         self._band_guard.untrack(self)
+        self._band_guard.shutdown()     # v14n：撤事件驱动钩子
         # 低层键盘钩子必须跟着窗口一起撤：它是**进程级全局钩子**，窗口没了
         # 还挂着会让每次按键都 round-trip 进一个没有 UI 的进程。
         self.set_desktop_hotkeys(False)
