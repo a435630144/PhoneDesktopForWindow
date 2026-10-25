@@ -216,7 +216,7 @@ pwsh -File scripts/build_portable.ps1
 - **Icons**: hover label blur fixed (the label layer is baked at the current frame scale, shadow and text share one transform); **hover highlight and animation are customisable** (colour / strength / scale / duration, all switchable off)
 - **Widgets**: content **no longer disappears in resize-edit mode**; the widget centre picks up new plugins **without a restart** (refresh button + shop installs rebuild cards); tighter UI (no duplicated title, single-column cards are width-capped and centred)
 - **Settings**: render rate is now the **global animation frame rate**; a dedicated **About** page (app / version / update check / author)
-- **Desktop**: the file context menu appends **native shell verbs** from the registry (edit/print etc.; unzip handlers implemented as shellex COM add-ins cannot be replicated — honestly degraded); **Delete / Ctrl+A / Ctrl+Z** are wired into the keyboard hook (previously unreachable code)
+- **Desktop**: the file context menu **mirrors the native Explorer menu** (COM IContextMenu, including third-party archivers' extract items; zip also gets a built-in "Extract All" that always works); **Delete / Ctrl+A / Ctrl+Z** are wired into the keyboard hook (previously unreachable code)
 
 ### 8.2.0 (v14e) · 2026-10-25 liquid glass upgrade: four adjustable optical layers after liquid-glass-react + zombie self-heal → [notes](docs/release_notes/8.2.0.md)
 
