@@ -148,7 +148,7 @@ class SettingsDialog(QDialog):
     NAV = (("general", "通用"), ("widgets", "组件库"), ("dock", "Dock 栏"),
            ("icons", "图标与标签"), ("liquid", "液态玻璃"),
            ("layout", "布局与网格"),
-           ("mode", "模式"), ("advanced", "高级"))
+           ("mode", "模式"), ("advanced", "高级"), ("about", "关于"))
 
     def __init__(self, window, storage, layer, parent=None, page=None):
         super().__init__(parent)
@@ -417,6 +417,18 @@ class SettingsDialog(QDialog):
         tabs.setSpacing(6)
         self.btn_tab_local = QPushButton(i18n.T("widget_center.tab_local"))
         self.btn_tab_shop = QPushButton(i18n.T("widget_center.tab_shop"))
+        # v14j 反馈：导入/安装新组件必须重启才识别——加「刷新」按钮
+        # （load_all 重扫本地目录 + 重建卡片），手动放进组件目录的也能识别
+        self.btn_refresh_widgets = QPushButton(i18n.T("widget_center.refresh"))
+        self.btn_refresh_widgets.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh_widgets.setFixedHeight(28)
+        self.btn_refresh_widgets.setStyleSheet(
+            "QPushButton{background: transparent; border: none;"
+            " border-radius: 8px; padding: 4px 14px; color: %s;"
+            " font-size: 13px;}"
+            "QPushButton:hover{background: rgba(255,255,255,0.10);}"
+            % theme.rgba(theme.TEXT_DIM))
+        self.btn_refresh_widgets.clicked.connect(self._refresh_local_widgets)
         group = QButtonGroup(self)
         group.setExclusive(True)
         for btn in (self.btn_tab_local, self.btn_tab_shop):
@@ -432,6 +444,7 @@ class SettingsDialog(QDialog):
                                    theme.rgba(theme.TEXT)))
             group.addButton(btn)
             tabs.addWidget(btn)
+        tabs.addWidget(self.btn_refresh_widgets)
         tabs.addStretch(1)
         lay.addLayout(tabs)
 
@@ -459,9 +472,23 @@ class SettingsDialog(QDialog):
             self.btn_tab_local.setChecked(True)
 
     def _on_widget_installed(self):
-        """商店装/卸了组件：本地列表要立刻反映（新增卡片 / 卸载消失）。"""
+        """商店装/卸了组件：本地列表要立刻反映（新增卡片 / 卸载消失）。
+
+        v14j：refresh() 只过滤已有卡片，新装组件的卡片根本不存在——
+        改走 reload_specs() 重建（2026-10-25 用户反馈"装完要重启才识别"
+        的第二个缺口）。
+        """
+        self._refresh_local_widgets()
+
+    def _refresh_local_widgets(self):
+        """重扫本地插件目录 + 重建组件库卡片（v14j 反馈：免重启识别）。"""
         try:
-            self.center_page.refresh()
+            from . import widget_plugin
+            widget_plugin.load_all()
+        except Exception:      # noqa: BLE001 —— 重扫失败不拖垮设置窗
+            pass
+        try:
+            self.center_page.reload_specs()
         except Exception:      # noqa: BLE001
             pass
 
@@ -2236,7 +2263,7 @@ class SettingsDialog(QDialog):
         self._sync_origin_controls()
         self._sync_dev_controls()
 
-        # ---- 维护与关于（原高级页内容） ----
+        # ---- 维护（v14j：更新/作者/版本标迁去独立「关于」页） ----
         card, c = self._card(body, i18n.T("settings.advanced.card.maintain"))
         btns = QWidget()
         bh = QHBoxLayout(btns)
@@ -2261,6 +2288,26 @@ class SettingsDialog(QDialog):
         self._row(c, card, i18n.T("settings.advanced.version.title"),
                   self.lbl_about_version,
                   i18n.T("settings.advanced.version.hint"))
+        lay.addWidget(card)
+        # v14j：更新卡 / 作者卡迁往「关于」页（_page_about）
+
+    def _page_about(self, body, lay):
+        """关于页（v14j，用户要求：关于软件 / 检测更新 / 关于作者集中一页）。
+
+        内容自原高级页尾部迁入，构建方法与 i18n 键沿用（_build_update_card
+        / _build_author_card 是方法，无外部引用，搬家零破坏）。
+        """
+        from . import version
+        card, c = self._card(body, i18n.T("settings.about.card.app"))
+        name_lbl = QLabel(i18n.T("app.name"))
+        name_lbl.setObjectName("rowHint")
+        self._row(c, card, i18n.T("settings.about.app.name.title"),
+                  name_lbl, i18n.T("settings.about.app.name.hint"))
+        self.lbl_about_version = QLabel(version.label())
+        self.lbl_about_version.setObjectName("rowHint")
+        self._row(c, card, i18n.T("settings.about.app.version.title"),
+                  self.lbl_about_version,
+                  i18n.T("settings.about.app.version.hint"))
         lay.addWidget(card)
 
         self._build_update_card(body, lay)

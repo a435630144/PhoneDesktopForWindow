@@ -26,6 +26,8 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QRectF, Qt, Signal
+
+QWIDGETSIZE_MAX = 16777215      # Qt 最大控件尺寸（解除 setMaximumWidth 限制用）
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton,
@@ -43,6 +45,8 @@ ALL = "全部"
 CARD_W = 320        # 2 列时的目标卡宽（可被拉伸）
 CARD_MIN_W = 300    # 卡片最小宽度：再窄就减列，而不是挤卡片（W16）
 CARD_H = 212
+CARD_MAX_W = 420    # v14j：单列上限——单列时卡片拉伸到全宽（700+px）既空
+                    # 又难看（用户反馈），限宽后居中
 GRID_GAP = 12       # 卡片间距（列判定按它算）
 CARD_MAX_COLS = 2   # 卡片网格最多两列（别叫 MAX_COLS：网格列上限在 grid_metrics）
 COLS = CARD_MAX_COLS  # 旧名兼容
@@ -339,15 +343,13 @@ class WidgetCenterPage(QWidget):
         self.setObjectName("widgetCenterPage")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 14)
-        root.setSpacing(12)
+        # v14j 反馈：上方大片空白——页内标题与右栏页标题重复（设置面板
+        # 已经有「组件库」页标题），去掉标题行、收紧边距
+        root.setContentsMargins(4, 4, 4, 10)
+        root.setSpacing(8)
 
-        # 顶部：标题 + 搜索
+        # 顶部：搜索（v14j：页内标题删除——与右栏 pageTitle 重复元素）
         head = QHBoxLayout()
-        title = QLabel(i18n.T("widget_center.title"))
-        title.setStyleSheet("color: %s; font-size: 17px; font-weight: 600;"
-                            % theme.rgba(theme.TEXT))
-        head.addWidget(title)
         head.addStretch(1)
         self.search = QLineEdit()
         self.search.setPlaceholderText(i18n.T("widget_center.search"))
@@ -555,16 +557,29 @@ class WidgetCenterPage(QWidget):
         for card in self.cards:
             self.grid.removeWidget(card)
         self.grid.removeWidget(self.empty_tip)
-        # W16：响应式列数——放得下 2 列才 2 列，否则 1 列卡片拉伸占满
+        # W16：响应式列数——放得下 2 列才 2 列，否则 1 列
         cols = columns_for(self.scroll.viewport().width())
         self._cols = cols
         for c in range(CARD_MAX_COLS):
             self.grid.setColumnStretch(c, 1 if c < cols else 0)
-        for i, card in enumerate(shown):
-            self.grid.addWidget(card, i // cols, i % cols)
+        # v14j 反馈：单列时卡片拉伸到 700+px 又空又难看——限宽居中；
+        # 双列保持均分拉伸。
+        if cols == 1:
+            vw = self.scroll.viewport().width()
+            col_w = min(CARD_MAX_W, max(CARD_MIN_W, vw - 24))
+            for card in self.cards:
+                card.setMaximumWidth(col_w)
+            for i, card in enumerate(shown):
+                self.grid.addWidget(card, i, 0, Qt.AlignHCenter)
+        else:
+            for card in self.cards:
+                card.setMaximumWidth(QWIDGETSIZE_MAX)
+            for i, card in enumerate(shown):
+                self.grid.addWidget(card, i // cols, i % cols)
         self.empty_tip.setVisible(not shown)
         if not shown:
-            self.grid.addWidget(self.empty_tip, 0, 0, 1, cols)
+            self.grid.addWidget(self.empty_tip, 0, 0, 1, cols,
+                                Qt.AlignHCenter)
 
         self._visible_types = [c.spec.type for c in shown]
         self.count_label.setText(

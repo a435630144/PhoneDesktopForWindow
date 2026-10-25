@@ -484,7 +484,8 @@ class MonitorWidget(GlassWidget):
         self._anim_t0 = 0.0
         self._curve = effects.spring_curve(0.9, ANIM_MS)
         self._anim = QTimer(self)
-        self._anim.setInterval(16)
+        # v14j：tick 间隔跟随全局动画帧率（渲染频率档位），不再写死 16ms
+        self._anim.setInterval(max(8, round(1000.0 / max(1, self._fps()))))
         self._anim.timeout.connect(self._step)
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
@@ -493,14 +494,24 @@ class MonitorWidget(GlassWidget):
         self._tick()
 
     # ---------- 数据节拍 ----------
+    def _fps(self) -> int:
+        """全局动画帧率（设置 ▸ 外观 ▸ 渲染频率；读不到回 60）。"""
+        try:
+            from ... import liquid_glass
+            return liquid_glass.live_fps(self.storage)
+        except Exception:            # noqa: BLE001
+            return 60
+
     def _disk_letter(self) -> str:
         return str((self.entry.get("settings") or {}).get("disk_letter") or "C:")
 
     def _tick(self):
         prev = self._snap
         self._snap = sample(self._disk_letter())
+        # 帧率档位可能改过——每秒对齐一次（QTimer 重复 set 恒等值无副作用）
+        self._anim.setInterval(max(8, round(1000.0 / max(1, self._fps()))))
         self._anim_from = {k: getattr(prev, k) for k in RING_KEYS
-                           if getattr(prev, k) is not None}
+                          if getattr(prev, k) is not None}
         # 首次有值直接落位（没有起点就不该从 0 弹上去）
         for k in RING_KEYS:
             if getattr(prev, k) is None and getattr(self._snap, k) is not None:

@@ -101,6 +101,10 @@ LIVE_FPS = 45               # 拖动时折射重算默认（约 22ms 一次；v1
                             # 每帧预算 16.6ms 内仍留得住：125% 缩放一次重算
                             # 约 3~5ms，200% 大组件约 8~12ms 也不至于拖死拖拽）
 # v14g：渲染频率档位（用户可调）。low 更省、high 最跟手、custom 自定。
+# v14j：升级为**全局动画帧率**（用户反馈"帧率改成控制全局，不止液态玻璃"
+# ）——液态玻璃拖动重算 + 所有自驱动动画时钟（monitor 数值弹簧等）共用
+# 求值入口 `live_fps(storage)`；QPropertyAnimation 走 Qt 内部时钟不受控，
+# 由 `effects.dur` 的时长档配套（见 effects.frame_scale）。
 FPS_MODES = {"low": 30, "medium": 45, "high": 60}
 FPS_CUSTOM_MIN, FPS_CUSTOM_MAX = 24, 240
 DEFAULT_FPS_MODE = "medium"          # 与 LIVE_FPS 对应的档位
@@ -192,11 +196,12 @@ def normalize_fps_mode(v) -> str:
 
 
 def live_fps(storage) -> int:
-    """拖动重算频率（fps）：档位（30/45/60）或自定义（夹 24~240）。
+    """全局动画帧率（fps）：档位（30/45/60）或自定义（夹 24~240）。
 
     设置面板只写 `liquid_fps_mode` / `liquid_fps_custom` 两个键，这里唯一
     求值；`Throttle` 通过 provider 每次触发时重解——改档位即时生效，不用
-    重建组件。
+    重建组件。v14j 起语义从"液态玻璃重算频率"升级为**全局动画帧率**：
+    monitor 等自驱动动画也从这个键取 tick 间隔（storage 全局一份）。
     """
     mode = normalize_fps_mode(_get(storage, "liquid_fps_mode", DEFAULT_FPS_MODE))
     if mode in FPS_MODES:
