@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.3.2 (v14y)**. Latest fix: **multi-select drag no longer crosses pages** — a 2×2 selection dropped on the bottom row used to shove two of its icons onto the next page; the block is now clamped into the target page and the displaced icons slide back into the vacated cells. The previous release (8.3.1) brought two things: **configuration export/import** (Settings ▸ Advanced ▸ Backup & migration — the current config is archived before importing, and a bad file never touches your layout); and the **release assets finally match `main`** — the 8.3.0 download page had been serving a v14n build, so the v14o–v14w fixes (including two real crashes) were in no installer at all. Also included: icon font size 70–140%, restore-defaults, the reworked dock thickness model, 2×2 big folders, adjustable hover-open/auto-close delays, the global animation frame rate (FrameDriver), and the whole v14w performance batch (no full-window repaint per flip frame, cached hit-testing, capped caches, log rotation). **108 test files green**. Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.3.3 (v14z)**. Latest fix: **a multi-selection now moves as one rigid block** — every member tracks the pointer pixel-for-pixel (they used to restart a 280 ms spring on each cell crossing, so the block trailed behind), and the whole block stops together at page/screen edges. The previous release fixed a 2×2 block spilling onto the next page; before that, configuration export/import and the release assets catch-up. **109 test files green**. Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v8.3.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-108%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.3-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-109%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -207,6 +207,12 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.3.3 (v14z) · 2026-10-27 multi-select drag moves as one block → [notes](docs/release_notes/8.3.3.md)
+
+- **Fix**: when dragging a multi-selection, only the grabbed icon followed the pointer instantly while the other members restarted a 280 ms spring at every cell crossing — the block looked scattered
+- Members now sit at *press position + pointer delta*, the same pointer sequence the drag ghost uses; the block clamps at page/screen edges with the same bounds the layout uses
+- Also: members no longer run the reflow spring (two position sources fighting); the follow is driven by a per-frame signal from the drag source (it keeps moving when the pointer is over another icon); hit-testing excludes the selection itself (members sit under the ghost and would otherwise hit themselves)
 
 ### 8.3.2 (v14y) · 2026-10-27 multi-select drag no longer crosses pages → [notes](docs/release_notes/8.3.2.md)
 

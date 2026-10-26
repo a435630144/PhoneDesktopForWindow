@@ -15,17 +15,17 @@
 
 #define MyAppName "掌镜桌面"
 #define MyAppNameEn "PhoneDesktop"  ; exe 名 / 数据目录保持不变
-#define MyAppVersion "8.3.2"
+#define MyAppVersion "8.3.3"
 #define MyAppPublisher "随便玩玩ay"
 #define MyAppExe "PhoneDesktop.exe"
 
 ; 打包目录名 / 产物名参数化：运行中的旧实例会锁住 dist\<BuildDir>，
 ; 换名重打时用 ISCC /DBuildDir=xxx /DOutBase=xxx 覆盖即可，不必改脚本。
 #ifndef BuildDir
-  #define BuildDir "PhoneDesktop_v14y"
+  #define BuildDir "PhoneDesktop_v14z"
 #endif
 #ifndef OutBase
-  #define OutBase "PhoneDesktop_v14y_Setup"
+  #define OutBase "PhoneDesktop_v14z_Setup"
 #endif
 
 [Setup]

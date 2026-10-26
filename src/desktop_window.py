@@ -138,6 +138,10 @@ class DesktopWindow(QWidget):
         self._layout_snap = None
         self._undo_stack = []
         self._drag_multi = False    # 多选拖动：走整体平移，不参与让位置换
+        # v14z：多选整块像素跟随 —— 按下瞬间的成员位置 / 块 bbox（列、行）
+        self._multi_origin = None
+        self._multi_box = None
+        self._multi_page = 0
         # 锚定组件拖动实时预览（2026-10-18 M4，与图标拖动同一套语义）：
         #   _widget_snap          进入预览时的布局快照（松手回退基准）
         #   _widget_preview_rect  组件新占位矩形（变化检测，防抖）
@@ -1974,6 +1978,10 @@ class DesktopWindow(QWidget):
         icon.dragStarted.connect(
             lambda ic=icon: self._on_anchor_drag_started(ic))
         icon.dragFinished.connect(self._on_drag_finished)
+        # v14z：拖动中每帧跟随（拖影与整块共用同一个 gpos 序列）。走信号
+        # 而不是 dragMoveEvent，是因为指针压在别的图标上时合成事件不发到
+        # 本窗口，只有拖拽源自己知道鼠标动了。
+        icon.dragMoved.connect(self._follow_multi_drag)
         icon.reflowHover.connect(self._on_reflow_hover)
         icon.reflowDrop.connect(self._on_reflow_drop)
         icon.payload_provider = self._drag_payload_for
@@ -2336,6 +2344,8 @@ class DesktopWindow(QWidget):
         self._drag_active = False
         self._drag_entry_id = None
         self._drag_multi = False
+        self._multi_origin = None
+        self._multi_box = None
         self._hl_cell = None            # v6 §5.2：红框随拖拽结束撤下
         self._cancel_push()             # 反馈 9：未触发的推让随松手作废
         self._cancel_edge_flip()        # 反馈 8：未触发的翻页随松手作废
@@ -2351,9 +2361,71 @@ class DesktopWindow(QWidget):
         self._drag_active = True
         if len(self._selected) > 1 and entry_id in self._selected:
             self._drag_multi = True
+            self._capture_multi_origin()
             return ",".join(sorted(self._selected))
         self._drag_multi = False
+        self._multi_origin = None
+        self._multi_box = None
         return entry_id
+
+    def _capture_multi_origin(self):
+        """多选整块跟随的基准（v14z）：按下瞬间每个成员的**像素位** + 块 bbox。
+
+        为什么需要它：拖动期间其余成员的视觉位置 = 起点 + 指针位移，与拖影
+        同源才能"像一只手抓住"；若按格子重启弹簧（旧做法），dragMove 频率
+        远高于 280ms，动画永远播不完，表现就是"只有 hover 那个跟手，其余
+        在追赶"（2026-10-27 反馈）。
+        """
+        self._multi_origin = {}
+        cols, rows = [], []
+        for eid in self._selected:
+            icon = self.icons.get(eid)
+            entry = self.storage.find_entry(eid)
+            if icon is None or entry is None:
+                continue
+            self._multi_origin[eid] = icon.pos()
+            cols.append(int(entry.get("col", 0) or 0))
+            rows.append(int(entry.get("row", 0) or 0))
+        self._multi_box = ((min(cols), max(cols), min(rows), max(rows))
+                           if cols and rows else None)
+        # 翻页会让整块换载体（页偏移由翻页系统统一施加），那时像素跟随
+        # 与页偏移会互相抵消——记录起始页，翻页后自动退回格子预览。
+        self._multi_page = grid_flow.current_page()
+
+    def _follow_multi_drag(self):
+        """多选整块**像素级**跟随（v14z）：成员 = 按下位置 + 指针位移。
+
+        夹紧用与 `multi_move` 同一份页边界（左右列 + 页行范围），所以贴边
+        时整块停住，不会"视觉飞出页外、松手又弹回"。主条目是拖影态（它自己
+        的部件位置不动，只有 ghost 跟手），这里跳过它。
+        """
+        if not self._drag_multi or not self._multi_origin or not self._multi_box:
+            return
+        if grid_flow.current_page() != getattr(self, "_multi_page", 0):
+            # 拖动中翻了页：整块已由翻页系统整体平移，像素跟随会让两套
+            # 偏移互相抵消。退回"按格预览"（成员改由让位动画落位）。
+            self._multi_origin = None
+            self._multi_box = None
+            return
+        primary_icon = self.icons.get(self._drag_entry_id or "")
+        delta = primary_icon.drag_delta() if primary_icon is not None else None
+        if delta is None:
+            return
+        cols = max(1, int(self.storage.columns or 1))
+        cw, ch = grid_flow.cell_size(self.storage)
+        cw, ch = max(1, int(cw)), max(1, int(ch))
+        min_c, max_c, min_r, max_r = self._multi_box
+        lo, hi = grid_flow.page_rows_of(min_r)
+        dx = max(-min_c * cw,
+                 min(int(delta.x()), (cols - 1 - max_c) * cw))
+        dy = max((lo - min_r) * ch,
+                 min(int(delta.y()), (hi - max_r) * ch))
+        for eid, origin in self._multi_origin.items():
+            if eid == self._drag_entry_id:
+                continue
+            icon = self.icons.get(eid)
+            if icon is not None:
+                icon.snap_to(origin.x() + dx, origin.y() + dy)
 
     # ---------- 实时让位（Live Reflow） ----------
     def dragMoveEvent(self, e):
@@ -2386,6 +2458,10 @@ class DesktopWindow(QWidget):
         self._maybe_edge_flip(pos)
         if grid_flow.free_mode(self.storage):
             return      # v6 §1.3：无界模式无让位预览、无目标格红框
+        # v14z：多选整块逐像素跟随指针——必须放在"同格早退"**之前**：
+        # 指针在同一格内移动时布局不变，但视觉要继续跟手（否则又是顿挫）。
+        if self._drag_multi:
+            self._follow_multi_drag()
         cell = self._drag_cell(pos)
         if dragged.startswith("M:"):
             # 反馈 6：文件夹成员拖出——落点按 _on_extract 的真实规则算
@@ -2962,7 +3038,14 @@ class DesktopWindow(QWidget):
             e = by_id.get(eid)
             if e is not None:
                 e["col"], e["row"] = c, r
-        self._animate_icons_to_layout(moves, skip=dragged_id)
+        # v14z：多选成员靠 `_follow_multi_drag` 逐像素跟手，不能再叠一层
+        # 280ms 弹簧（两套位置源互相拉扯 = 用户说的"不连贯"）。这里只给
+        # **被让位的非选中图标**播让位动画。
+        anim = moves
+        if self._drag_multi and self._multi_origin:
+            anim = {k: v for k, v in moves.items()
+                    if k not in self._multi_origin}
+        self._animate_icons_to_layout(anim, skip=dragged_id)
         self._cull_moved_icons(moves)   # v6 §4：跨页位移按落点页显隐
 
     def _animate_icons_to_layout(self, moves: dict, skip=None, sync_all=False):

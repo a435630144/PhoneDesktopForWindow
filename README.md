@@ -4,15 +4,15 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.2（v14y）**。最新修复：**多选拖动跨页**——框选 2×2 拖到页底会把其中两个甩到下一页，现在整块夹紧在落点所在页内，下方被让位的图标滑回块腾出的空格。上一版（8.3.1）两件事：**配置导出/导入**（设置 ▸ 高级 ▸ 备份与迁移，导入前自动留档，坏包不动现有配置）；**发布包终于对齐 main**——8.3.0 页面上挂的一直是 v14n 构建，v14o–v14w 六批修复（含两个真崩溃）此前没有任何安装包包含。同时补齐图标字号 70%~140%、恢复默认配置、Dock 厚度模型、大文件夹 2×2、悬停展开/关闭时长可调、全局动画帧率（FrameDriver），以及 v14w 的整批性能优化（翻页去全窗重绘、拖拽与命中缓存、缓存上限、日志轮转）。**108 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.3（v14z）**。最新修复：**多选拖动整块跟手**——框选后拖动，成员与手中图标逐像素同步（此前成员按格重启弹簧、一路追赶，块看起来是散的），贴边时整块一起停住；上一版修了多选拖到页底会把块内图标甩到下一页，再上一版加了**配置导出/导入**并把发布包对齐 main。**109 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.3.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-108%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.3-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-109%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 一款**界面语言与操作逻辑都走手机路线**的第三方桌面美化软件：它在桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层——位置、动效、文件夹、小组件，全部由你定义。
 
-开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**108 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
+开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**109 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="桌面总览：安卓式网格图标 + 锚定小组件"></p>
 
@@ -208,6 +208,12 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.3.3（v14z）· 2026-10-27 多选拖动整块跟手 → [发布说明](docs/release_notes/8.3.3.md)
+
+- **修复**：框选多个图标拖动时，只有手底下那个跟鼠标瞬间移动，其余成员按格重启 280ms 弹簧、一路追赶（"不连贯"）
+- 现在成员位置 = 按下位置 + 指针位移，与拖影共用同一个指针序列；贴页边/屏边时整块一起停住（夹紧边界与布局同源）
+- 配套：成员不再叠让位弹簧（消灭两套位置源互相拉扯）；跟随由拖拽源每帧信号驱动（指针压在别的图标上也不冻）；命中测试排除"自己人"（否则成员永远在拖影底下，会被自己命中）
 
 ### 8.3.2（v14y）· 2026-10-27 多选拖动不再跨页 → [发布说明](docs/release_notes/8.3.2.md)
 

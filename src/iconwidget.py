@@ -171,6 +171,10 @@ class AppIcon(QWidget):
     openLocation = Signal(dict)         # 在资源管理器中定位（桌面文件）
     dragStarted = Signal()
     dragFinished = Signal()
+    # v14z：拖动中每次鼠标移动（与拖影同步）——多选整块跟随靠它驱动。
+    # 不能只靠桌面窗口的 dragMoveEvent：指针压在**别的图标**上时，合成
+    # 事件发给那个图标，桌面窗口收不到，整块就会冻住而拖影继续走。
+    dragMoved = Signal()
     reflowHover = Signal(str, int, int)  # 拖动悬停：payload, 指针全局 x, y
     reflowDrop = Signal(str, int, int)   # 悬停未满即松手：payload, 指针全局 x, y
 
@@ -250,12 +254,16 @@ class AppIcon(QWidget):
         self.payload_provider = None  # 多选拖拽时由主窗口注入，返回逗号分隔的 id 列表
         self._press_pos = None
         self._dragged = False
+        # 拖动中最后一次鼠标全局位置：多选整块跟随按 (last - press_global)
+        # 算位移，与拖影同源（v14z）。不取 QCursor：合成输入下它不可靠。
+        self._last_gpos = None
         # 自管理拖拽循环状态（替代 QDrag.exec 的 OLE DoDragDrop，见 _exec_drag）：
         #   _drag_loop     拖动进行中（grabMouse 已捕获全部鼠标事件）
         #   _drag_target   当前悬停目标（本应用部件；应用外/无目标为 None）
         #   _drag_ghost_w  浮动拖影部件
         #   _drag_mime     本次拖拽的 MIME 数据（payload 协议不变）
         self._drag_loop = False
+        self._drag_ids = set()       # 本次拖动的整块 id（命中测试排除自己人）
         self._drag_target = None
         self._drag_ghost_w = None
         self._drag_mime = None
@@ -420,6 +428,34 @@ class AppIcon(QWidget):
         self._animate(b"appear", 0.0, 1.0, 260, effects.spring_curve(0.72, 260))
 
     # ---------- 位置动画（网格实时让位） ----------
+    def snap_to(self, x: int, y: int):
+        """立刻到位——**拖动中整块跟随**专用（v14z）。
+
+        与 `animate_to` 的分工：那个是"让位"语义（被挤走的图标弹簧滑走，
+        有生命感）；这个是"我手里抓着的那块"——必须与指针逐像素同步，
+        任何缓动都会变成"追赶"。先停掉飞行中的 pos 动画再 move：否则旧
+        弹簧会在下一帧把图标拉回上一格（与 animate_to 里的 2026-10-18
+        竞态同源）。
+        """
+        for a in list(self._anims):
+            if a.propertyName() == b"pos":
+                a.stop()
+                if a in self._anims:
+                    self._anims.remove(a)
+        self.move(int(x), int(y))
+
+    def drag_delta(self):
+        """本次拖动相对**按下点**的全局位移（px）；不在拖动中返回 None。
+
+        多选整块跟随的唯一取源：与拖影用的是同一个 gpos 序列，所以成员
+        与手中图标逐像素同步，不会各跑各的——拖影跟手、成员却按格子重启
+        280ms 弹簧，正是用户说的"只有 hover 那个是瞬间移动，其余不连贯"。
+        """
+        if not self._drag_loop or self._press_global is None \
+                or self._last_gpos is None:
+            return None
+        return self._last_gpos - self._press_global
+
     def animate_to(self, x: int, y: int, duration: int = 280, damping: float = 0.78):
         """弹簧滑行到目标格（安卓 launcher 的让位语言）。
 
@@ -1316,6 +1352,9 @@ class AppIcon(QWidget):
         self._core_target_id = None
         self._core_in = False
         self._drag_loop = True
+        self._last_gpos = None
+        # 本次拖动的整块 id 集合：命中测试要排除自己人（v14z）
+        self._drag_ids = {p for p in str(payload).split(",") if p}
         # P3：拖动开始时缓存同窗桌面图标候选（_best_overlap_icon 用）
         host = self.window()
         if host is not None:
@@ -1331,6 +1370,7 @@ class AppIcon(QWidget):
 
     def _drag_move(self, gpos):
         """拖动中：拖影跟随光标 + 命中测试 + 合成 dragEnter/dragMove/dragLeave。"""
+        self._last_gpos = QPoint(gpos)
         ghost = self._drag_ghost_w
         if ghost is not None and self._press_pos is not None:
             # 快照裁到图标区后左上角不等于部件左上角：减去裁切偏移，
@@ -1338,6 +1378,7 @@ class AppIcon(QWidget):
             off = self._drag_crop_off
             ghost.move(int(gpos.x() - self._press_pos.x() + off.x()),
                        int(gpos.y() - self._press_pos.y() + off.y()))
+        self.dragMoved.emit()
         target = self._hit_target(gpos)
         if target is not self._drag_target:
             prev, self._drag_target = self._drag_target, target
@@ -1561,8 +1602,14 @@ class AppIcon(QWidget):
                 return None, 0.0
             self._drag_kids = kids
         best, best_ratio = None, 0.0
+        dragging = getattr(self, "_drag_ids", None) or set()
         for w in kids:
             if not w.isVisible():
+                continue
+            # v14z：多选整块跟手后，成员就压在拖影底下——它们不是合并
+            # 目标（同一块东西不能拖进自己），必须先排除，否则命中测试
+            # 永远命中"自己人"，桌面窗口收不到 dragMove，让位预览直接死。
+            if getattr(w, "drag_payload", "") in dragging:
                 continue
             ratio = self._overlap_ratio(w)
             if ratio > best_ratio:
@@ -1602,6 +1649,7 @@ class AppIcon(QWidget):
     def _finish_drag(self, gpos):
         """松手：落点有效 -> 合成 drop；gpos 为 None（取消）-> dragLeave。"""
         self._drag_loop = False
+        self._drag_ids = set()
         try:
             self.releaseMouse()
         except RuntimeError:

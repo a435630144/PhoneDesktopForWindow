@@ -384,6 +384,16 @@ def _page_bounds(row: int, page_rows: Optional[Tuple[int, int]] = None) -> Tuple
     return p * rpp, p * rpp + rpp - 1
 
 
+def page_rows_of(row: int) -> Tuple[int, int]:
+    """行所属页的行范围 (lo, hi)——布局夹紧与视觉夹紧的**同一份**边界。
+
+    公开入口（`_page_bounds` 是它的实现）：多选拖动时整块视觉跟随要按
+    "块贴到页边就停住"夹紧，必须与 `multi_move` 的布局夹紧取同一组数，
+    否则会出现"视觉还在往外走、松手又弹回页内"。
+    """
+    return _page_bounds(row, None)
+
+
 def _forward_scan_cell(start: Cell, blocked: set, cols: int,
                        max_row: int) -> Cell:
     """从 start 起按阅读序找第一个非 blocked 格（v6 §5.0 顺延扫描）。
