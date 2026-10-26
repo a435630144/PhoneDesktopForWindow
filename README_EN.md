@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.3.3 (v14z)**. Latest fix: **a multi-selection now moves as one rigid block** — every member tracks the pointer pixel-for-pixel (they used to restart a 280 ms spring on each cell crossing, so the block trailed behind), and the whole block stops together at page/screen edges. The previous release fixed a 2×2 block spilling onto the next page; before that, configuration export/import and the release assets catch-up. **109 test files green**. Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.3.4 (v15a)**. Two UI bugs fixed: **the folder-rename field was rebuilt** (it used to be a fixed 240 px box centred on the title band, so on a 240 px popup it stuck out ~40 px on both sides over the wallpaper; it now spans the title band, clamps into the popup and the screen, and paints its own glass surface), and **larger icon font no longer clips the second label line** (the layout never knew about the font-scale knob and reserved label height for 100%; it now reserves for the scaled font and is hard-clamped to the cell). The previous release made multi-selection drags move as one block. **111 test files green**.
 
-[![release](https://img.shields.io/badge/release-v8.3.3-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-109%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.4-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-111%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -207,6 +207,12 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.3.4 (v15a) · 2026-10-27 rename field rebuilt + large icon fonts no longer clip → [notes](docs/release_notes/8.3.4.md)
+
+- **Rename field**: no longer a fixed 240 px box (it overhung narrow popups); it now spans the title band, clamps into the popup and screen, and paints a glass surface with centred bold text and a translucent selection
+- **Icon font scale**: the layout did not know about `label_font_scale` and reserved label height for 100% → at 120% the second line overflowed and got clipped, at 140% it silently collapsed to one line; the band is now reserved for the scaled font and hard-clamped to the cell, with the line count driven by the real available height
+- Also: a font-scale change swaps each icon's layout (no widget rebuild — selection, drags and animations survive); folder member cells and the free-mode slot finder share the same knob
 
 ### 8.3.3 (v14z) · 2026-10-27 multi-select drag moves as one block → [notes](docs/release_notes/8.3.3.md)
 

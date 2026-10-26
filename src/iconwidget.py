@@ -358,12 +358,17 @@ class AppIcon(QWidget):
     appear = Property(float, _get_appear, _set_appear)
 
     def _scale_font_px(self, px: int) -> int:
-        """基准字号 × 用户字号缩放（v14q；夹 9~40 防极端）。"""
+        """基准字号 × 用户字号缩放（v14q；夹 9~40 防极端）。
+
+        实现只有一处（`grid_sizing.scaled_font_px`）——布局预留标签带高度时
+        调的是同一个函数，否则就是"预留按 10px、画的是 14px"（v15a 裁剪 bug）。
+        """
+        from . import grid_sizing
         try:
             k = float(getattr(self._label_style, "font_scale", 1.0) or 1.0)
         except Exception:        # noqa: BLE001
             k = 1.0
-        return max(9, min(40, int(round(int(px) * k))))
+        return grid_sizing.scaled_font_px(px, k)
 
     def _animate(self, prop, start, end, duration, easing=None):
         """启动属性动画（自动停止同属性上的旧动画并持有引用防 GC）。"""
@@ -874,30 +879,37 @@ class AppIcon(QWidget):
             return [(rect, Qt.AlignHCenter | Qt.AlignVCenter, line)]
         if self._layout is not None:
             # 反馈 12：默认两行折行（一行显示不下折到第二行，末行省略号）。
-            # 行数由 `grid_sizing.LABEL_LINES` 决定，标签区高度
-            # （`layout.label_h`）已按两行预留；格子装不下时 grid_sizing
-            # 自动退回单行，这里按实际预留高度算行数，两边不会不一致。
-            font = theme.ui_font(self._label_font_px,
-                                 bold=self._label_style.bold)
-            fm = QFontMetrics(font)
-            rect = QRect(2, self.icon_size + 2,
-                         self.width() - 4, self._label_h)
-            max_lines = 2 if self._label_h >= fm.height() * 2 - 2 else 1
-            lines = self._wrap_elide(name, fm, rect.width(), max_lines)
-            lh = fm.height() + 1
-            return [(QRect(rect.left(), rect.top() + i * lh,
-                           rect.width(), lh), Qt.AlignCenter, line)
-                    for i, line in enumerate(lines) if line]
+            # 标签带 = 部件底部的 `label_h`（v15a：布局按**字号缩放后**的
+            # 字号预留，`height - label_h` 就是图标区下沿，大文件夹同样成立）。
+            top = max(0, self.height() - int(self._label_h))
+            band = QRect(2, top, max(1, self.width() - 4),
+                         max(1, self.height() - top))
+            return self._fit_label_lines(name, band)
         # 旧路径（无 layout）：标签字号随 chrome 缩放（DPI×用户缩放）：
         # 100% 时 12px，125% 时 15px；最多两行折行 + 末行省略号
+        top = max(0, self.height() - int(self._label_h))
+        band = QRect(2, top, max(1, self.width() - 4),
+                     max(1, self.height() - top))
+        return self._fit_label_lines(name, band)
+
+    def _fit_label_lines(self, name: str, band: QRect, max_lines: int = 2):
+        """把名字折进标签带：行数 = min(max_lines, 带高 // 行高)，整块垂直居中。
+
+        v15a（用户反馈"字号调大后第二行被 hover 框裁剪"）：旧实现看到
+        "布局预留了 2 行"就硬画两行，可字号缩放（0.7~1.4）把行高也放大了
+        ——预留高度是 100% 的，第二行于是画出部件底边，被 QWidget 自身的
+        矩形裁掉（hover 高亮框正好画在同一条边界上，看起来就是"被框裁剪"）。
+        现在行数只由**当前真实行高与可用高度**决定，宁可少一行也不越界。
+        """
         font = theme.ui_font(self._label_font_px, bold=self._label_style.bold)
         fm = QFontMetrics(font)
-        rect = QRect(2, self.icon_size + int(round(6 * self._m)),
-                     self.width() - 4, int(round(34 * self._m)))
-        lines = self._wrap_elide(name, fm, rect.width(), 2)
-        lh = fm.height() + 1
-        return [(QRect(rect.left(), rect.top() + i * lh,
-                       rect.width(), lh), Qt.AlignCenter, line)
+        lh = max(1, min(fm.height() + 1, band.height()))
+        room = max(1, band.height() // lh)
+        n = max(1, min(int(max_lines), room))
+        lines = self._wrap_elide(name, fm, band.width(), n)
+        y0 = band.top() + max(0, (band.height() - len(lines) * lh) // 2)
+        return [(QRect(band.left(), y0 + i * lh, band.width(), lh),
+                 Qt.AlignCenter, line)
                 for i, line in enumerate(lines) if line]
 
     def _label_pixmap(self, items, scale: float = 1.0):
@@ -1122,6 +1134,26 @@ class AppIcon(QWidget):
             self._selection_visible = on
             self.update()
 
+    def apply_layout(self, layout):
+        """换一份 `grid_sizing.IconLayout`（v15a：字号缩放改了标签带高度）。
+
+        与 `set_label_style` 的分工：那个只换**样式**（颜色/字重/阴影），
+        这个换**几何**（图标边长、标签带、部件尺寸）。两者都不重建部件
+        ——桌面窗口把选中态、拖拽、淡入动画都挂在同一个 QWidget 上，
+        重建就会全部作废（v10 反馈 27 的教训）。
+        """
+        if layout is None:
+            return
+        self._layout = layout
+        self.icon_size = int(layout.icon_box)
+        self._box_x = int(layout.chrome_x)
+        self._label_h = int(layout.label_h)
+        self._label_font_base = int(layout.font_px)
+        self._label_font_px = self._scale_font_px(self._label_font_base)
+        self._label_pm_cache = None          # 贴图按旧行宽烘的，必须作废
+        self.setFixedSize(int(layout.widget_w), int(layout.widget_h))
+        self.update()
+
     def set_label_style(self, style):
         """热更新标签文字样式（v14 反馈 3：设置里改完立刻重画，不重建图标）。"""
         self._label_style = style
@@ -1129,6 +1161,16 @@ class AppIcon(QWidget):
         base = getattr(self, "_label_font_base", None)
         if base is not None:
             self._label_font_px = self._scale_font_px(base)
+        if self._compact and not self._no_label:
+            # v15a：紧凑格（文件夹成员）的标签带是**由字号派生**的，
+            # 字号变大就得跟着长高，否则成员名被切掉半行。
+            lh = max(12, int(round(self._label_font_px * 1.45)))
+            if lh != self._label_h:
+                self._label_h = lh
+                pad = max(2, int(round(4 * self._m)))
+                self.setFixedSize(self.width(),
+                                  self.icon_size + pad * 2 + lh)
+        self._label_pm_cache = None
         self.update()
 
     def invalidate_hover_style(self):

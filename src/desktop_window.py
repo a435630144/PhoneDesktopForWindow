@@ -138,6 +138,8 @@ class DesktopWindow(QWidget):
         self._layout_snap = None
         self._undo_stack = []
         self._drag_multi = False    # 多选拖动：走整体平移，不参与让位置换
+        # v15a：上一个标签字号缩放（布局里的标签带高度依赖它；变了才重排）
+        self._label_fs = None
         # v14z：多选整块像素跟随 —— 按下瞬间的成员位置 / 块 bbox（列、行）
         self._multi_origin = None
         self._multi_box = None
@@ -1353,13 +1355,26 @@ class DesktopWindow(QWidget):
         不走 `rebuild()`：那会删掉重建全部图标 QWidget，选中态 / 飞行中的
         拖拽 / 淡入动画全部作废（v10 反馈 27 同款事故）。标签样式只影响
         `_paint_label`，换对象 + update() 就够了。
+
+        v15a：**字号缩放会改几何**（标签带高度 = 缩放后字号的函数）。这一项
+        变化时给每个图标换一份新 layout 并重新居中——仍然不重建部件，
+        只是 `setFixedSize` + `move`（对象引用不变，选中/动画都保住）。
         """
         st = self._label_style()
+        relayout = (self._label_fs is None
+                    or abs(float(self._label_fs) - float(st.font_scale)) > 1e-6)
         for icon in list(self.icons.values()):
             try:
+                if relayout:
+                    icon.apply_layout(self._icon_layout(icon.entry))
+                    icon.move(*self._entry_pos(icon.entry))
                 icon.set_label_style(st)
             except (RuntimeError, AttributeError):
                 pass     # 已销毁的图标（rebuild 进行中）直接跳过
+        self._label_fs = float(st.font_scale)
+        if relayout:
+            # 尺寸已换过 -> 签名同步，避免下一次 resize 再白重建一遍
+            self._icon_layout_sig = self._icon_layout()
         # 文件夹弹窗里的成员标签同样消费这份样式——弹窗是懒重建的，
         # 下一次 open 自然拿到新值；已开着的弹窗由它自己的 update 兜底。
         popup = getattr(self, "_popup", None)
@@ -2050,16 +2065,18 @@ class DesktopWindow(QWidget):
             except (TypeError, ValueError):
                 scale = 1.0
         # v14t：大文件夹 = 2×2 跨格瓷砖（内部 3×3 成员格 + 标签）
+        fs = self._label_style().font_scale
         if grid_flow.is_big_folder(self.storage, entry or {}):
             cw2, ch2 = m.cw * 2, m.ch * 2
             box = max(24, int(round(min(cw2, ch2) / 3.0)))
             return grid_sizing.IconLayout(
                 widget_w=cw2, widget_h=ch2, icon_box=box, chrome_x=0,
-                label_h=max(16, int(round(18 * self.storage.ui_scale()))),
+                label_h=max(16, int(round(18 * self.storage.ui_scale() * fs))),
                 font_px=max(10, int(round(12 * self.storage.ui_scale()))),
                 )
         return grid_sizing.icon_layout(
-            m.cw, m.ch, self.storage.resolved_icon_fit(m.cw), scale=scale)
+            m.cw, m.ch, self.storage.resolved_icon_fit(m.cw), scale=scale,
+            font_scale=fs)
 
     def _add_icon(self, entry):
         """增量新增一个图标（add_app / rescan / 文件夹提取等）。

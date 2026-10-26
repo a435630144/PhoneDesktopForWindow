@@ -1161,6 +1161,20 @@ def _page_local_pos(storage, col: int, row: int, centered: bool = False) -> Cell
     return x, y
 
 
+def label_font_scale(storage) -> float:
+    """图标标签字号缩放倍数（0.7~1.4），布局侧的取值入口。
+
+    实现只有一处（`label_style.font_scale_of`）——绘制、格内居中、
+    `icon_layout` 三处都从这里拿，杜绝"预留一套、画另一套"。
+    旧替身 storage（探针 / 单测桩）没有该设置时按 1.0。
+    """
+    try:
+        from . import label_style as _ls
+        return float(_ls.font_scale_of(storage))
+    except Exception:      # noqa: BLE001 —— 替身 storage / 早期导入
+        return 1.0
+
+
 def icon_center_offset(storage, entry=None) -> Cell:
     """图标 widget 在 cell 内的居中留白 ((cw-w)//2, (ch-h)//2)（反馈 1）。
 
@@ -1206,7 +1220,10 @@ def icon_center_offset(storage, entry=None) -> Cell:
             scale = float(entry.get("icon_scale", 1.0) or 1.0)
         except (TypeError, ValueError):
             scale = 1.0
-    lay = grid_sizing.icon_layout(cw, ch, fit, scale=scale)
+    # v15a：字号缩放也参与尺寸（标签带跟着字号长高），居中偏移必须同源，
+    # 否则字号调大后图标仍按旧高度居中 -> 整体偏下、底部越格。
+    lay = grid_sizing.icon_layout(cw, ch, fit, scale=scale,
+                                  font_scale=label_font_scale(storage))
     return max(0, (cw - lay.widget_w) // 2), max(0, (ch - lay.widget_h) // 2)
 
 

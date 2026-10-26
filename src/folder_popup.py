@@ -47,7 +47,7 @@ from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
                             QPointF, QPropertyAnimation, QRect, QRectF,
                             QTimer, Qt, Signal, Property)
 from PySide6.QtGui import (QColor, QCursor, QFont, QGuiApplication, QPainter,
-                           QPen, QPixmap)
+                           QPalette, QPen, QPixmap)
 from PySide6.QtWidgets import (QApplication, QLineEdit, QMenu,
                                QWidget)
 
@@ -267,38 +267,112 @@ class BandInputBox(QWidget):
     小型 frameless 窗口承担（与便签 interactive 组件同决策：要键盘
     就不能 NOACTIVATE，见 DEVLOG 6.3）。Enter / 失焦提交，Esc 取消；
     空白输入视为取消（保持原值）。挂桌面带、插到调用方窗口之上。
+
+    v15a 重做（用户 2026-10-27："重命名文本框有点丑，点击出现的文本框会
+    超出 UI"）：
+
+      * **尺寸跟锚点走**：`show_over()` 把输入框铺在调用方给的矩形（文件夹
+        的标题带）上，再夹进父窗口矩形与可用屏幕。旧实现固定 240×36 居中，
+        而标题带右侧要让给三个按钮——240px 宽的弹窗只有 126px 标题带，
+        居中的 240px 框左右各顶出 40+px，直接压在弹窗外的壁纸上。
+      * **自绘玻璃面**代替 QLineEdit 的系统边框：深色圆角底 + 顶部 1px 内
+        高光 + 强调色描边（聚焦时亮、失焦转白 46）+ 两圈柔和外阴影。文字
+        居中、与文件夹标题同族加粗——读起来是"标题就地变成可编辑"，而不是
+        一块贴上去的系统输入框。
     """
     committed = Signal(str)
     cancelled = Signal()
 
-    def __init__(self, text="", placeholder="", title="", parent=None):
+    RADIUS = 10
+    EDITOR_MIN_W = 120
+    EDITOR_MAX_W = 360
+    EDITOR_MIN_H = 28
+    EDITOR_MAX_H = 40
+
+    def __init__(self, text="", placeholder="", title="", parent=None,
+                 width=240, height=36, font_px=15):
         super().__init__(parent)
         self.title = title
         self._done = False          # 提交/取消只允许发生一次
+        self._font_px = max(10, int(font_px or 15))
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(240, 36)
+        self.setFixedSize(max(1, int(width)), max(1, int(height)))
         self.line = QLineEdit(self)
-        self.line.setGeometry(0, 0, 240, 36)
+        self.line.setFrame(False)
         self.line.setText(text or "")
         self.line.setPlaceholderText(placeholder or title or "")
-        self.line.setFrame(False)
         self.line.setToolTip(title)
+        self.line.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        self._apply_line_font()
+        # 输入框自身完全透明：玻璃面由 paintEvent 画（两条边框叠在一起
+        # 就是旧实现"丑"的来源之一——系统边框 + 圆角 QSS 互相打架）
         self.line.setStyleSheet(
-            "QLineEdit { background: %s; color: %s; border: 1px solid %s;"
-            " border-radius: 10px; padding: 0 12px;"
-            " font-family: %s; font-size: 14px; }" % (
-                theme.rgba(theme.SURFACE_POPUP), theme.rgba(theme.TEXT),
-                theme.rgba(theme.ACCENT),
-                ", ".join('"%s"' % f for f in theme.FONT_FAMILIES)))
+            "QLineEdit { background: transparent; border: none;"
+            " color: %s; padding: 0; }" % theme.rgba(theme.TEXT))
+        # 选中态：半透明强调色（alpha 80）。全不透明会把名字糊成一条蓝带
+        # ——这是旧输入框"丑"的一半原因；文字保持白色，在淡蓝底上仍清楚。
+        pal = self.line.palette()
+        sel = QColor(theme.ACCENT)
+        sel.setAlpha(80)
+        pal.setColor(QPalette.Highlight, sel)
+        pal.setColor(QPalette.HighlightedText, QColor(theme.TEXT))
+        pal.setColor(QPalette.Base, QColor(0, 0, 0, 0))
+        pal.setColor(QPalette.Text, QColor(theme.TEXT))
+        self.line.setPalette(pal)
         self.line.returnPressed.connect(self._commit)
         self.line.textChanged.connect(lambda: self._resize_to_text())
+        self._layout_line()
+        self.line.installEventFilter(self)
+
+    def _apply_line_font(self):
+        f = theme.ui_font(self._font_px, bold=True)
+        f.setLetterSpacing(QFont.AbsoluteSpacing, 0.3)
+        self.line.setFont(f)
 
     # ---------- 几何 ----------
+    def show_over(self, global_rect, bounds=None, font_px=None):
+        """铺在给定全局矩形上（文件夹标题带），夹进 bounds / 可用屏幕。
+
+        `global_rect`：锚点矩形（标题带）；`bounds`：不得越出的父矩形
+        （弹窗本体）；两者都是**全局坐标**。宽度取标题带宽（120~360），
+        高度比标题带高 4px 但夹在 28~40 —— 输入框比一行字略高才像"可编辑"，
+        又不会撑破标题区。
+        """
+        if font_px:
+            self._font_px = max(10, int(font_px))
+            self._apply_line_font()
+        w = max(self.EDITOR_MIN_W, min(self.EDITOR_MAX_W,
+                                       int(global_rect.width())))
+        h = max(self.EDITOR_MIN_H, min(self.EDITOR_MAX_H,
+                                       int(global_rect.height()) + 4))
+        self.setFixedSize(w, h)
+        self._layout_line()
+        x = int(global_rect.center().x() - w / 2)
+        y = int(global_rect.center().y() - h / 2)
+        if bounds is not None:
+            # 再让出 4px：外阴影/圆角不许压在弹窗玻璃的边缘上（窄弹窗上
+            # 差几像素就会"看着像顶出 UI"，用户对这条边界极敏感）
+            b = bounds.adjusted(4, 2, -4, -2)
+            x = max(b.left(), min(x, b.right() - w + 1))
+            y = max(b.top(), min(y, b.bottom() - h + 1))
+        scr = (QGuiApplication.screenAt(global_rect.center())
+               or QGuiApplication.primaryScreen())
+        if scr is not None:
+            g = scr.availableGeometry()
+            x = max(g.left(), min(x, g.right() - w + 1))
+            y = max(g.top(), min(y, g.bottom() - h + 1))
+        self.move(int(x), int(y))
+        self._present()
+
     def show_at(self, global_center):
-        """在给定全局点居中显示并抢焦点（全选文字，直接覆盖输入）。"""
-        self.move(int(global_center.x() - self.width() / 2),
-                  int(global_center.y() - self.height() / 2))
+        """在给定全局点居中显示（旧签名保留；新代码用 `show_over`）。"""
+        w, h = self.width(), self.height()
+        self.show_over(QRect(int(global_center.x() - w / 2),
+                             int(global_center.y() - h / 2), w, h))
+
+    def _present(self):
+        """显示 + 抢焦点 + 全选（直接覆盖输入）。"""
         self.show()
         self.line.setFocus()
         self.line.selectAll()
@@ -308,6 +382,43 @@ class BandInputBox(QWidget):
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
+
+    def _layout_line(self):
+        """输入行内缩到圆角之内（左右各让出圆角 + 2px，避免文字贴边）。"""
+        if not hasattr(self, "line"):
+            return
+        rad = min(self.RADIUS, max(2, self.height() // 2 - 1))
+        self.line.setGeometry(rad + 2, 1, max(1, self.width() - (rad + 2) * 2),
+                              max(1, self.height() - 2))
+
+    def resizeEvent(self, e):
+        self._layout_line()
+        super().resizeEvent(e)
+
+    def paintEvent(self, e):
+        """自绘玻璃面：外阴影 -> 底色 -> 顶部内高光 -> 1px 描边。"""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        rad = min(float(self.RADIUS), max(2.0, r.height() / 2.0 - 1.0))
+        p.setPen(Qt.NoPen)
+        for grow, alpha in ((2, 16), (1, 26)):
+            p.setBrush(QColor(0, 0, 0, alpha))
+            p.drawRoundedRect(r.adjusted(-grow, -grow + 1, grow, grow + 1),
+                              rad + grow, rad + grow)
+        body = QColor(theme.SURFACE_POPUP)
+        body.setAlpha(242)
+        p.setBrush(body)
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(r, rad, rad)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 22), 1))
+        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), max(2.0, rad - 1),
+                          max(2.0, rad - 1))
+        focused = self.line.hasFocus()
+        p.setPen(QPen(theme.ACCENT_BORDER if focused
+                      else QColor(255, 255, 255, 46), 1))
+        p.drawRoundedRect(r, rad, rad)
 
     def attach_above(self, other_window):
         """挂桌面带并插到 other_window 之上（弹窗内浮现的输入框）。"""
@@ -345,6 +456,9 @@ class BandInputBox(QWidget):
 
     def eventFilter(self, obj, ev):
         """点到框外即提交（比 focusOutEvent 可靠，见 show_at 注释）。"""
+        if obj is getattr(self, "line", None) and ev.type() in (QEvent.FocusIn,
+                                                               QEvent.FocusOut):
+            self.update()            # 聚焦态描边换色
         if ev.type() == QEvent.MouseButtonPress and not self._done:
             try:
                 inside = self.frameGeometry().contains(QCursor.pos())
@@ -512,9 +626,17 @@ class FolderPopup(QWidget):
         return popup_metrics(cell_w, len(self.entry.get("apps", [])))["icon"]
 
     def _member_label_h(self):
-        """成员名的单行标签高度（与 AppIcon 紧凑格同一公式）。"""
+        """成员名的单行标签高度（与 AppIcon 紧凑格同一公式）。
+
+        v15a：跟着**字号缩放**走（`grid_sizing.scaled_font_px` 是布局与绘制
+        共用的那一个函数）——旧实现按 100% 算，字号调到 140% 时成员格比
+        标签矮 6px，成员名贴着格子下沿画。
+        """
+        from . import grid_sizing
         m = self.storage.ui_scale()
-        font_px = max(10, int(round(11 * m)))
+        base = max(10, int(round(11 * m)))
+        font_px = grid_sizing.scaled_font_px(
+            base, label_style.font_scale_of(self.storage))
         return max(12, int(round(font_px * 1.45)))
 
     def _member_pad_x(self):
@@ -996,6 +1118,15 @@ class FolderPopup(QWidget):
         return win32_layer.insert_above_window(hwnd, top)
 
     # ---------- M5：重命名 ----------
+    @property
+    def _renaming(self) -> bool:
+        """是否正在行内重命名（标题要让位，不能和输入框叠两份文字）。"""
+        return self._editor is not None
+
+    def _title_visible(self) -> bool:
+        """标题是否该画（重命名期间由输入框代替）。"""
+        return self._editor is None
+
     def _open_rename(self):
         if self._editor is not None:
             self._editor.close()
@@ -1005,12 +1136,19 @@ class FolderPopup(QWidget):
         box.committed.connect(self._on_renamed)
         box.cancelled.connect(self._on_editor_cancelled)
         self._editor = box
-        c = self.mapToGlobal(self._title_rect().center())
-        box.show_at(c)
+        # v15a：铺在**标题带**上并夹进弹窗矩形——固定 240×36 居中在窄弹窗
+        # 上会左右顶出（用户："点击出现的文本框会超出 UI"）。
+        tr = self._title_rect()
+        band = QRect(self.mapToGlobal(tr.topLeft()), tr.size())
+        bounds = QRect(self.mapToGlobal(self.rect().topLeft()), self.size())
+        _s, m, _pad, _title_h, _bar = self._metrics()
+        box.show_over(band, bounds=bounds, font_px=int(round(15 * m)))
         box.attach_above(self)
+        self.update()               # 标题让位给输入框
 
     def _on_editor_cancelled(self):
         self._editor = None
+        self.update()               # 标题恢复
 
     def _on_renamed(self, name):
         self.entry["name"] = name
@@ -1336,13 +1474,14 @@ class FolderPopup(QWidget):
         # 标题：随玻璃浮现渐显；vibrancy 规范——材质上文字提高对比、
         # 稍加字重、微加字距（不用平灰）。iOS 文件夹标题居中。
         p.setOpacity(min(1.0, (z - 0.55) / 0.35))
-        tr = self._title_rect()
-        p.setPen(theme.TEXT)
-        f = theme.ui_font(15, bold=True)
-        f.setLetterSpacing(QFont.AbsoluteSpacing, 0.3)
-        p.setFont(f)
-        p.drawText(tr, Qt.AlignHCenter | Qt.AlignVCenter,
-                   self.entry.get("name") or "文件夹")
+        if self._title_visible():
+            tr = self._title_rect()
+            p.setPen(theme.TEXT)
+            f = theme.ui_font(15, bold=True)
+            f.setLetterSpacing(QFont.AbsoluteSpacing, 0.3)
+            p.setFont(f)
+            p.drawText(tr, Qt.AlignHCenter | Qt.AlignVCenter,
+                       self.entry.get("name") or "文件夹")
         # 右上角按钮组（反馈 8）：× 关闭 / ＋ 快速添加 / ○ 文件夹样式
         hdr = self._header_rects()
         for key in ("close", "add", "style"):

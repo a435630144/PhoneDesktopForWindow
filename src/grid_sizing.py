@@ -159,13 +159,29 @@ def _font_for_box(icon_box: int) -> int:
     return 14
 
 
-def label_height(icon_box: int, lines: int = 1) -> int:
+def scaled_font_px(font_px: int, font_scale: float = 1.0) -> int:
+    """基准字号 × 用户字号缩放（夹 9~40）。
+
+    与 `AppIcon._scale_font_px` **同一条规则**：布局预留的标签带高度必须
+    按真正要画的那个字号算，否则字号一调大，文字就长出预留区（v15a 用户
+    反馈"第二行被 hover 框裁剪"的根因——布局不知道有个缩放旋钮）。
+    """
+    try:
+        k = float(font_scale)
+    except (TypeError, ValueError):
+        k = 1.0
+    return max(9, min(40, int(round(int(font_px) * k))))
+
+
+def label_height(icon_box: int, lines: int = 1,
+                 font_scale: float = 1.0) -> int:
     """标签区高度（与 `AppIcon._paint_label` 同源）。
 
     `lines=1` 保持 v6 以来的单行规格（`cell_from_native` 只用它，格距不变）；
     `lines=2` 追加第二行的行距——反馈 12「文件名一行显示不下折两行」。
+    `font_scale`（v15a）：用户字号缩放（0.7~1.4），标签带同比长高。
     """
-    font = _font_for_box(icon_box)
+    font = scaled_font_px(_font_for_box(icon_box), font_scale)
     h = max(LABEL_H_MIN, int(round(font * 1.5)) + 4)
     for _ in range(max(0, int(lines) - 1)):
         h += int(round(font * LABEL_LINE_FACTOR))
@@ -218,7 +234,7 @@ def fit_for(native_px, cw: int, fit_or_tier) -> float:
 
 
 def icon_layout(cw: int, ch: int, fit_or_tier="medium",
-                scale: float = 1.0) -> IconLayout:
+                scale: float = 1.0, font_scale: float = 1.0) -> IconLayout:
     """cell + 图标占比 -> 图标 widget 尺寸方案（v7 §3.1）。
 
     第三参接受 float（占比）或档位串；档位串走 `TIER_FIT_FALLBACK`
@@ -230,6 +246,11 @@ def icon_layout(cw: int, ch: int, fit_or_tier="medium",
     scale（反馈 12）：**单图标覆盖倍数**，默认 1.0。它只乘在 icon_box 上
     （标签区跟着图标边长走），不改变格子与全局档位——"每个图标一个乘数"
     是 v7 §4 决策 A 的最后一层。
+
+    font_scale（v15a）：用户字号缩放（0.7~1.4）。标签带按**缩放后**的字号
+    预留高度；`font_px` 仍返回**基准**字号——真正绘制时 `AppIcon` 会再乘
+    一次缩放，两处必须是同一个数（否则就是"预留按 10px、画的是 14px"）。
+    标签带另有硬上限：`widget_h <= ch`，字号再大也不越格压到下一行。
     """
     f = parse_fit(fit_or_tier)
     if f is None:
@@ -245,9 +266,15 @@ def icon_layout(cw: int, ch: int, fit_or_tier="medium",
     w = max(1, box + 2 * chrome_x)
     # 反馈 12：默认两行标签。格子（ch）装得下第二行才给——cell 尺寸由
     # `cell_from_native` 单行规格推导，widget 只能在格内纵向余量里长。
-    lh = label_height(box, 1)
-    if LABEL_LINES > 1 and box + label_height(box, LABEL_LINES) <= max(1, int(ch)):
-        lh = label_height(box, LABEL_LINES)
+    lh = label_height(box, 1, font_scale)
+    if LABEL_LINES > 1 and box + label_height(box, LABEL_LINES,
+                                              font_scale) <= max(1, int(ch)):
+        lh = label_height(box, LABEL_LINES, font_scale)
+    # v15a 防御：字号放大后 cell 未必同步变大（格距由原生图标尺寸反解，
+    # 不跟字号走），标签带不得越过格子——否则 widget 会盖住下一行。
+    avail = max(1, int(ch) - box)
+    if lh > avail:
+        lh = max(LABEL_H_MIN, avail)
     h = max(1, box + lh)
     return IconLayout(w, h, box, chrome_x, lh, _font_for_box(box))
 

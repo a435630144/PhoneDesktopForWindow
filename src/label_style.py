@@ -159,6 +159,20 @@ def default_label_style() -> LabelStyle:
         outline_width=DEFAULT_OUTLINE_WIDTH)
 
 
+def font_scale_of(storage) -> float:
+    """图标标签字号缩放倍数（0.7~1.4）。
+
+    **唯一来源**：绘制（`AppIcon._scale_font_px`）与布局
+    （`grid_sizing.icon_layout(font_scale=…)`）都读它——两处各取一次设置就
+    会出现"预留按 100%、画的是 140%"的错位（v15a 用户反馈的裁剪 bug）。
+    无 storage（探针 / 旧调用）时按 1.0。
+    """
+    if storage is None:
+        return 1.0
+    return _int(storage, "label_font_scale", DEFAULT_FONT_SCALE,
+                FONT_SCALE_MIN, FONT_SCALE_MAX) / 100.0
+
+
 def label_style(storage) -> LabelStyle:
     """按当前设置求标签样式（**唯一入口**，绘制层不许自己拼颜色）。"""
     if storage is None:
@@ -177,8 +191,7 @@ def label_style(storage) -> LabelStyle:
         outline_width=_int(storage, "label_outline_width",
                            DEFAULT_OUTLINE_WIDTH,
                            LABEL_OUTLINE_MIN, LABEL_OUTLINE_MAX),
-        font_scale=_int(storage, "label_font_scale", DEFAULT_FONT_SCALE,
-                        FONT_SCALE_MIN, FONT_SCALE_MAX) / 100.0)
+        font_scale=font_scale_of(storage))
 
 
 def default_preview_style() -> PreviewStyle:

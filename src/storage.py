@@ -965,13 +965,18 @@ class Storage:
         尺寸偏小会让新图标和邻居叠在一起。旧实现按 `icon_px` 复刻
         legacy chrome 尺寸，统一尺寸后就失配了。
         """
-        from . import grid_flow, grid_sizing
+        from . import grid_flow, grid_sizing, label_style
+        # v15a：标签字号缩放会改 widget 高度（标签带跟着字号长），空位
+        # 计算必须用同一个数，否则无界模式新图标会和邻居叠一点。
+        fs = label_style.font_scale_of(self)
         m = grid_flow.current_metrics()
         if m is not None:
-            lay = grid_sizing.icon_layout(m.cw, m.ch, self.icon_fit())
+            lay = grid_sizing.icon_layout(m.cw, m.ch, self.icon_fit(),
+                                          font_scale=fs)
         else:
             cw, ch = grid_flow.cell_size(self)
-            lay = grid_sizing.icon_layout(cw, ch, self.icon_fit())
+            lay = grid_sizing.icon_layout(cw, ch, self.icon_fit(),
+                                          font_scale=fs)
         return lay.widget_w, lay.widget_h
 
     def occupant(self, col, row, exclude_id=None):
