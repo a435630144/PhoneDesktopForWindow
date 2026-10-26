@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.1（v14x）**。本版两件事：**配置导出/导入**（设置 ▸ 高级 ▸ 备份与迁移，导入前自动留档，坏包不动现有配置）；**发布包终于对齐 main**——8.3.0 页面上挂的一直是 v14n 构建，v14o–v14w 六批修复（含两个真崩溃）此前没有任何安装包包含。同时补齐图标字号 70%~140%、恢复默认配置、Dock 厚度模型、大文件夹 2×2、悬停展开/关闭时长可调、全局动画帧率（FrameDriver），以及 v14w 的整批性能优化（翻页去全窗重绘、拖拽与命中缓存、缓存上限、日志轮转）。**108 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.2（v14y）**。最新修复：**多选拖动跨页**——框选 2×2 拖到页底会把其中两个甩到下一页，现在整块夹紧在落点所在页内，下方被让位的图标滑回块腾出的空格。上一版（8.3.1）两件事：**配置导出/导入**（设置 ▸ 高级 ▸ 备份与迁移，导入前自动留档，坏包不动现有配置）；**发布包终于对齐 main**——8.3.0 页面上挂的一直是 v14n 构建，v14o–v14w 六批修复（含两个真崩溃）此前没有任何安装包包含。同时补齐图标字号 70%~140%、恢复默认配置、Dock 厚度模型、大文件夹 2×2、悬停展开/关闭时长可调、全局动画帧率（FrameDriver），以及 v14w 的整批性能优化（翻页去全窗重绘、拖拽与命中缓存、缓存上限、日志轮转）。**108 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.3.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-108%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-108%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -208,6 +208,12 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.3.2（v14y）· 2026-10-27 多选拖动不再跨页 → [发布说明](docs/release_notes/8.3.2.md)
+
+- **修复**：框选 2×2 四个图标、抓住右上角拖到最底下一行松手，块内下面两个会被挤到下一个分页——多选整块平移只夹了左右与上边界，页底没夹（页 = `row // 每页行数`，多占一行就是换页）
+- 现在整块垂直夹紧在**落点所在页**：贴页底整体上移、贴页顶整体下移；块比一页还高时对齐页顶（宁可溢出不丢条目）
+- 顺带：被让位的图标优先回填**块净空出的格**（同列优先），整块下移一格时下方图标平滑滑回空格，不再被顺延甩到本行右侧
 
 ### 8.3.1（v14x）· 2026-10-27 发布包对齐 main + 配置备份/迁移 → [发布说明](docs/release_notes/8.3.1.md)
 

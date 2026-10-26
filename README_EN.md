@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.3.1 (v14x)**. Two things this time: **configuration export/import** (Settings ▸ Advanced ▸ Backup & migration — the current config is archived before importing, and a bad file never touches your layout); and the **release assets finally match `main`** — the 8.3.0 download page had been serving a v14n build, so the v14o–v14w fixes (including two real crashes) were in no installer at all. Also included: icon font size 70–140%, restore-defaults, the reworked dock thickness model, 2×2 big folders, adjustable hover-open/auto-close delays, the global animation frame rate (FrameDriver), and the whole v14w performance batch (no full-window repaint per flip frame, cached hit-testing, capped caches, log rotation). **108 test files green**. Bug reports and ideas are welcome via Issues.
+> 🚧 **Under active development**: the latest release is **8.3.2 (v14y)**. Latest fix: **multi-select drag no longer crosses pages** — a 2×2 selection dropped on the bottom row used to shove two of its icons onto the next page; the block is now clamped into the target page and the displaced icons slide back into the vacated cells. The previous release (8.3.1) brought two things: **configuration export/import** (Settings ▸ Advanced ▸ Backup & migration — the current config is archived before importing, and a bad file never touches your layout); and the **release assets finally match `main`** — the 8.3.0 download page had been serving a v14n build, so the v14o–v14w fixes (including two real crashes) were in no installer at all. Also included: icon font size 70–140%, restore-defaults, the reworked dock thickness model, 2×2 big folders, adjustable hover-open/auto-close delays, the global animation frame rate (FrameDriver), and the whole v14w performance batch (no full-window repaint per flip frame, cached hit-testing, capped caches, log rotation). **108 test files green**. Bug reports and ideas are welcome via Issues.
 
-[![release](https://img.shields.io/badge/release-v8.3.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-108%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.2-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-108%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -207,6 +207,12 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.3.2 (v14y) · 2026-10-27 multi-select drag no longer crosses pages → [notes](docs/release_notes/8.3.2.md)
+
+- **Fix**: select a 2×2 block, grab its top-right icon and drop it on the bottom row — the lower two icons used to be shoved onto the next page. The rigid block move clamped left/right/top but never the page bottom (page = `row // rows_per_page`, so one extra row *is* a page change)
+- The block is now clamped vertically into the **target page**: it slides up at the bottom edge, down at the top edge, and top-aligns when it is taller than a page (overflow rather than losing items)
+- Also: displaced icons now refill the cells the block actually vacated (same column first), so they slide smoothly into the gap instead of being pushed sideways
 
 ### 8.3.1 (v14x) · 2026-10-27 release assets caught up with `main` + config backup/restore → [notes](docs/release_notes/8.3.1.md)
 

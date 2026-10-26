@@ -157,6 +157,52 @@ def main():
     check("MM5 随机 200 轮不变量（无叠格/不丢/不越界）", bad == 0,
           "bad=%d" % bad)
 
+    # ---------- MM7：贴页底整块上移（不得跨页）----------
+    # 2026-10-27 用户反馈：框选 2×2 四个图标，抓住右上角那个拖到最底下一行
+    # 松手，块内**下面两个**跑到下一个分页去了。病根：multi_move 只夹了
+    # 左右与上边界（min_r < 0），没夹页底——2 行高的块落到底行就溢出。
+    # 规格与水平同构：贴边整块夹紧平移，形状/相对偏移守恒。
+    layout = L([("a", 1, 2), ("b", 2, 2), ("c", 1, 3), ("d", 2, 3),
+                ("x", 1, 4), ("y", 2, 4)])
+    moves = grid_flow.multi_move(layout, 8, "b", (2, 4), {"a", "b", "c", "d"},
+                                 page_rows=(0, 4))
+    check("MM7 贴页底整块上移（块内全部留在本页）",
+          moves == {"a": (1, 3), "b": (2, 3), "c": (1, 4), "d": (2, 4),
+                    "x": (1, 2), "y": (2, 2)},
+          "got %s" % (moves,))
+    check("MM7b 无成员跨页（row <= 页底 4）",
+          all(r <= 4 for _, r in moves.values()),
+          "%s" % sorted({r for _, r in moves.values()}))
+
+    # ---------- MM8：第二页同样不得越到上一页 ----------
+    # 旧代码只夹 min_r < 0（全局 0 行），在第 2 页顶部拖就会窜回第 1 页。
+    layout = L([("a", 1, 7), ("b", 2, 7), ("c", 1, 8), ("d", 2, 8)])
+    moves = grid_flow.multi_move(layout, 8, "a", (1, 5), {"a", "b", "c", "d"},
+                                 page_rows=(5, 9))
+    check("MM8 第 2 页顶部整块下移（不窜回上一页）",
+          moves == {"a": (1, 5), "b": (2, 5), "c": (1, 6), "d": (2, 6)},
+          "got %s" % (moves,))
+    check("MM8b 无成员越到上一页（row >= 页顶 5）",
+          all(r >= 5 for _, r in moves.values()))
+
+    # ---------- MM9：块比一页还高 -> 对齐页顶、允许溢出（不丢条目）----------
+    layout = L([("s%d" % i, 0, i) for i in range(6)])
+    moves = grid_flow.multi_move(layout, 8, "s0", (0, 3),
+                                 {"s%d" % i for i in range(6)},
+                                 page_rows=(0, 4))
+    check("MM9 超高块对齐页顶不丢成员",
+          moves is not None and len(moves) == 6
+          and min(r for _, r in moves.values()) == 0,
+          "got %s" % (moves,))
+
+    # ---------- MM10：右下角同时夹紧（水平 + 垂直）----------
+    layout = L([("a", 0, 0), ("b", 1, 0), ("c", 0, 1), ("d", 1, 1)])
+    moves = grid_flow.multi_move(layout, 8, "b", (7, 4),
+                                 {"a", "b", "c", "d"}, page_rows=(0, 4))
+    check("MM10 右下角整块左上移，形状保持且不跨页",
+          moves == {"a": (6, 3), "b": (7, 3), "c": (6, 4), "d": (7, 4)},
+          "got %s" % (moves,))
+
     # ---------- MM6：无效输入 ----------
     check("MM6 primary 不在 selected -> None",
           grid_flow.multi_move(L([("a", 0, 0)]), COLS, "a", (1, 0),

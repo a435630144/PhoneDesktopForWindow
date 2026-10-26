@@ -369,6 +369,21 @@ def auto_arrange_moves(entries: Sequence[dict], cols: int, dragged_id: str,
 
 
 
+def _page_bounds(row: int, page_rows: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
+    """落点行所属页的行范围 (lo, hi)，供多选整块做垂直夹紧。
+
+    显式 `page_rows` 优先（测试注入，不受运行态快照影响）；否则按
+    `rows_per_page()` + `page_of(row)` 推算。页是**纯视图概念**：
+    `page = row // rows_per_page`，所以"多占一行"实际是"换到下一页"，
+    拖动时必须夹紧在页内，不能靠溢出代替换页。
+    """
+    if page_rows:
+        return int(page_rows[0]), int(page_rows[1])
+    rpp = max(1, rows_per_page())
+    p = page_of(row, rpp)
+    return p * rpp, p * rpp + rpp - 1
+
+
 def _forward_scan_cell(start: Cell, blocked: set, cols: int,
                        max_row: int) -> Cell:
     """从 start 起按阅读序找第一个非 blocked 格（v6 §5.0 顺延扫描）。
@@ -389,7 +404,8 @@ def _forward_scan_cell(start: Cell, blocked: set, cols: int,
 
 
 def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
-               target: Cell, selected, extra_occupied=()) -> Optional[dict]:
+               target: Cell, selected, extra_occupied=(),
+               page_rows: Optional[Tuple[int, int]] = None) -> Optional[dict]:
     """多选拖动的位移清单 {id: (col, row)}（v6 §5.0，2026-10-19 新增）。
 
     症状（反馈）：框选多个图标再移动，松手后**有的图标叠在同一个网格内**。
@@ -400,14 +416,17 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
          组件占位）时顺延到最近空格（行优先扫描），不允许覆盖；
       3. 贴右/下边缘时 col/row 夹紧不得导致成员聚成一列（旧病根：逐成员
          max(0, min(cols-1, ...)) 各自夹紧，多个成员的 nc 全落 cols-1）；
+         **垂直同理**：整块必须留在目标页内（贴页底整块上移、贴页顶整块
+         下移），块比一页还高时对齐页顶、允许向下溢出（宁可溢出也不丢）；
       4. 目标格的非选中占据者：交换到源格；源格也被占则顺延，绝不丢条目。
 
     算法（纯函数，零 Qt 依赖；TDD：tests/test_multi_move.py）：
       a. 主条目落点 = 指针 cell 夹紧；落在组件占位格上则从该格起**行优先
          顺延**（组件格不给图标用；非选中图标不挡主条目——按规则 4 交换）；
       b. 整块**刚性平移**：成员 = 主条目落点 + 原相对偏移；bbox 夹紧进
-         [0, cols-1] x [0, +inf)（贴右整体左移、贴左整体右移——形状与
-         偏移守恒，不聚列不叠格）；
+         [0, cols-1] x **目标页行范围**（贴右整体左移、贴左整体右移、
+         贴页底整体上移、贴页顶整体下移——形状与偏移守恒，不聚列不叠格），
+         `page_rows` 缺省按 `rows_per_page()` 与落点行推算，测试可显式注入；
       c. 成员落点仍撞组件占位（主条目顺延后刚性格平移可能把别人推回组件
          格的罕见交织）：按阅读序逐个行优先顺延（主条目优先）；
       d. 非选中占据者交换到对应成员的**源格**；源格被占/在组件上/越界则
@@ -464,12 +483,24 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
     min_c = min(c for c, _ in want.values())
     max_c = max(c for c, _ in want.values())
     min_r = min(r for _, r in want.values())
+    max_r = max(r for _, r in want.values())
     shift_c = -min_c if min_c < 0 else 0
     if max_c + shift_c > cols - 1:
         shift_c = (cols - 1) - max_c
     if min_c + shift_c < 0:          # 块宽于网格：左对齐兜底
         shift_c = -min_c
-    shift_r = -min_r if min_r < 0 else 0
+    # 垂直夹紧到**目标页**：只夹上边界 0 的老逻辑会让 2 行高的块在页底
+    # 溢出到下一页（用户看到"框的 4 个里下面两个自己跑了"）。块的形状与
+    # 相对偏移守恒优先于"主条目精确落指针格"（与水平方向 MM4 同策）。
+    lo, hi = _page_bounds(land[1], page_rows)
+    shift_r = 0
+    if max_r - min_r > hi - lo:
+        shift_r = lo - min_r        # 块比一页还高：对齐页顶，允许溢出
+    else:
+        if min_r < lo:
+            shift_r = lo - min_r
+        if max_r + shift_r > hi:
+            shift_r = hi - max_r
     finals = {i: (want[i][0] + shift_c, want[i][1] + shift_r) for i in sel}
 
     # c. 成员级组件占位顺延（主条目已在 a 解析；按阅读序，主条目优先）
@@ -487,21 +518,39 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
     # 返回值含全部选中成员（含原地恒等）——调用方与 MM5 按数量守恒校验
     moves = {i: finals[i] for i in sel}
 
-    # d. 非选中占据者交换到源格；源格不可用（被占/组件上/越界）则顺延
+    # d. 非选中占据者交换到源格；源格不可用（被占/组件上/越界）则优先
+    #    回填**净空出的格**（块原 footprint - 新 footprint），最后才顺延。
+    #    2026-10-27：整块下移量恰为块高时，每个成员的源格都被自己的队友
+    #    接着占住，旧的"直接顺延"会把下方两个图标甩到本行右侧——用户看到
+    #    的是"让位图标乱飞"。整块平移真正让出来的是那一行空格，回填它才
+    #    符合"东西往上补位"的直觉。
     occupied = set(finals.values())
     moving = sorted(c for c in nomove if c in occupied)
     staying = set(nomove) - set(moving)
+    vacated = set(src.values()) - occupied - staying - extra
     for c in moving:
         xid = nomove[c]
         member = next(i for i in sel if finals[i] == c)
         dest = src[member]
         if not (0 <= dest[0] < cols) or dest in extra \
                 or dest in occupied or dest in staying:
-            dest = _forward_scan_cell(c, extra | occupied | staying,
-                                      cols, max(max_row, c[1]))
+            dest = _pick_vacated(c, vacated) or _forward_scan_cell(
+                c, extra | occupied | staying, cols, max(max_row, c[1]))
         moves[xid] = dest
         occupied.add(dest)
+        vacated.discard(dest)
     return moves
+
+
+def _pick_vacated(src: Cell, vacated) -> Optional[Cell]:
+    """从"净空出的格"里给被让位图标挑一个：**同列优先**（保持上下归属），
+    再按行距、列距、阅读序。没有候选返回 None（调用方走顺延）。"""
+    if not vacated:
+        return None
+    return min(vacated,
+               key=lambda v: (0 if v[0] == src[0] else 1,
+                              abs(v[1] - src[1]), abs(v[0] - src[0]),
+                              v[1], v[0]))
 
 
 def displace_cells(src_cells, blocked, cols: int, page_rows) -> dict:
