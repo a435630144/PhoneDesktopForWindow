@@ -73,7 +73,8 @@ def run(cmd, *, cwd=None, env=None, timeout=1800, check=True):
     say("  $ %s" % " ".join(str(c) for c in cmd))
     t0 = time.time()
     proc = subprocess.run(cmd, cwd=str(cwd or ROOT), env=env,
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, timeout=timeout,
+                          encoding="utf-8", errors="replace")
     took = time.time() - t0
     out = (proc.stdout or "").strip()
     err = (proc.stderr or "").strip()
@@ -109,9 +110,14 @@ def read_iss():
 
 
 def find_iscc():
+    """ISCC 可能在系统级或**用户级**安装（本机就是后者：Inno 6 默认装到
+    %LOCALAPPDATA%\\Programs\\Inno Setup 6，不在 Program Files 里）。"""
+    local = os.environ.get("LOCALAPPDATA", "")
     cands = [os.environ.get("INNO_SETUP", ""),
              r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-             r"C:\Program Files\Inno Setup 6\ISCC.exe"]
+             r"C:\Program Files\Inno Setup 6\ISCC.exe",
+             os.path.join(local, "Programs", "Inno Setup 6", "ISCC.exe") if local else "",
+             os.path.join(local, "Inno Setup 6", "ISCC.exe") if local else ""]
     for c in cands:
         if c and os.path.isfile(c):
             return c
@@ -194,17 +200,20 @@ def main():
     # ---------- 预检 ----------
     if not args.dry_run:
         dirty = subprocess.run(["git", "status", "--porcelain"],
-                               cwd=str(ROOT), capture_output=True, text=True).stdout
+                               cwd=str(ROOT), capture_output=True, text=True,
+                               encoding="utf-8", errors="replace").stdout
         if dirty.strip() and not args.allow_dirty:
             raise SystemExit("工作区有未提交改动，先提交（或加 --allow-dirty）：\n%s"
                              % dirty.strip()[:800])
         branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                                cwd=str(ROOT), capture_output=True, text=True).stdout.strip()
+                                cwd=str(ROOT), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace").stdout.strip()
         if branch != args.target:
             raise SystemExit("当前分支 %r，不是 %r" % (branch, args.target))
         say("[预检] check_docs …")
         proc = subprocess.run([sys.executable, str(CHECK_DOCS)], cwd=str(ROOT),
-                              capture_output=True, text=True)
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
         tail = (proc.stdout or "").strip().splitlines()
         if proc.returncode != 0:
             say("\n".join("  " + ln for ln in tail[-8:]))
