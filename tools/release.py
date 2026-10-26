@@ -218,15 +218,18 @@ def main():
         say("[构建] 跳过（--skip-build）；产物存在性：zip=%s exe=%s"
             % (portable_zip.exists(), setup_exe.exists()))
     elif args.dry_run:
-        say("[构建] 将执行 pwsh build_portable.ps1 -OutName %s_Portable" % build_dir)
+        say("[构建] 将执行 pwsh build_portable.ps1 -OutName %s" % build_dir)
         say("[构建] 将执行 ISCC /DBuildDir=%s /DOutBase=%s" % (build_dir, out_base))
     else:
         pwsh = find_pwsh()
         if not pwsh:
             raise SystemExit("找不到 pwsh / powershell")
         say("[构建] 便携包 …")
+        # 注意：OutName 是**目录名**（PhoneDesktop_v14x），脚本自己拼
+        # "<OutName>_Portable.zip"；别再给它加 "_Portable" 后缀——那样会出
+        # 现 ..._Portable_Portable.zip（本批实际踩到）。
         run([pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-File", str(BUILD_PS1), "-OutName", "%s_Portable" % build_dir],
+             "-File", str(BUILD_PS1), "-OutName", build_dir],
             timeout=2400)
         iscc = find_iscc()
         if not iscc:
