@@ -219,6 +219,24 @@ class WidgetLayer(QObject):
             self._spawn(entry)
         self.sweep_orphans()
 
+    def reload_all(self):
+        """整份 widgets 表被替换（导入备份 / 恢复出厂）后全量重载。
+
+        与 `apply_layout_mode` 的区别：那边按「模式是否变化」决定重建，
+        这里**无条件**销毁重建——内存里的条目已经不是同一批了（id 可能
+        全变），留着旧窗口就是一群对不上号的幽灵。销毁走 `_destroy_now`
+        （不播淡出、不留透明命中壳，坑 #131）。
+        """
+        for w in list(self.widgets.values()):
+            self._destroy_now(w)
+        self.widgets.clear()
+        self._applied_mode = grid_flow.layout_mode(self.storage)
+        for entry in self.storage.widgets:
+            self._place_default(entry)      # 跨机导入可能压根没有 x/y
+            self._spawn(entry)
+        self.sweep_orphans()
+        self.widgetsChanged.emit()
+
     def _destroy_now(self, w):
         """立即销毁组件窗口（重建路径）：不播淡出，不留命中壳。"""
         self._band_guard.untrack(w)

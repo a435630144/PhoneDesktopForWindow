@@ -382,6 +382,17 @@ def main(app):
     dlg.chk_page_rules.setChecked(False)
     app.processEvents()
 
+    # ---------- U16 备份与迁移（v14x） ----------
+    navs[8].click()          # 高级页
+    app.processEvents()
+    adv_ids = page_widgets(dlg, 8)
+    check("U16 高级页有导出/导入配置按钮",
+          dlg.btn_export_cfg.text().startswith("导出配置")
+          and dlg.btn_import_cfg.text().startswith("导入配置"),
+          "%s / %s" % (dlg.btn_export_cfg.text(), dlg.btn_import_cfg.text()))
+    check("U16b 两按钮都挂在高级页（不是别的分页）",
+          id(dlg.btn_export_cfg) in adv_ids and id(dlg.btn_import_cfg) in adv_ids)
+
     # ---------- U12 高度受控 ----------
     dlg.show()
     app.processEvents()

@@ -19,9 +19,9 @@ from PySide6.QtCore import (Property, QElapsedTimer, QEasingCurve,
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication,
                            QIcon, QPainter, QPen, QPixmap)
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog, QComboBox,
-                               QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-                               QPushButton, QScrollArea, QSizePolicy, QSlider,
-                               QStackedWidget, QVBoxLayout, QWidget)
+                               QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QMessageBox, QPushButton, QScrollArea, QSizePolicy,
+                               QSlider, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import autostart
 from . import dock
@@ -2557,6 +2557,26 @@ class SettingsDialog(QDialog):
 
         # v14s：关于/版本/更新/作者都在「关于」页——高级页不再重复。
 
+        # v14x：备份与迁移（审核报告「高价值 1」）。导出/导入的是整份
+        # state.json（布局 + 图标 + 文件夹 + 组件表 + 全部设置），不含
+        # 文件本身——换机、改坏回滚、把布局抄给朋友三个场景共用一条路。
+        card, c = self._card(body, i18n.T("settings.advanced.backup.card"))
+        back_btns = QWidget()
+        bhl = QHBoxLayout(back_btns)
+        bhl.setContentsMargins(0, 0, 0, 0)
+        bhl.setSpacing(8)
+        self.btn_export_cfg = QPushButton(
+            i18n.T("settings.advanced.backup.export"))
+        self.btn_export_cfg.clicked.connect(self._export_config)
+        self.btn_import_cfg = QPushButton(
+            i18n.T("settings.advanced.backup.import"))
+        self.btn_import_cfg.clicked.connect(self._import_config)
+        bhl.addWidget(self.btn_export_cfg)
+        bhl.addWidget(self.btn_import_cfg)
+        self._row(c, card, i18n.T("settings.advanced.backup.title"), back_btns,
+                  i18n.T("settings.advanced.backup.hint"))
+        lay.addWidget(card)
+
         # 恢复默认配置（v14s：用户要求）：全部设置回出厂。图标排布与
         # 小组件是用户内容不属"配置"，保留（确认框里写明）。
         card, c = self._card(body,
@@ -3221,6 +3241,103 @@ class SettingsDialog(QDialog):
         if ret == QMessageBox.Yes:
             self.storage.seed_desktop_clone(replace=True)
             self._call_window('rebuild')
+
+    # ---------- v14x：配置备份 / 迁移 ----------
+    def _export_config(self):
+        """导出整份配置（`.pdbak`，其实就是一个可读 JSON）。
+
+        默认落在桌面、文件名带日期——用户导出后最常做的两件事就是
+        "发给别人"和"丢网盘"，两者都不该再让他去 `%APPDATA%` 里找。
+        """
+        import os
+        import time
+
+        from . import backup, version
+
+        try:
+            from PySide6.QtCore import QStandardPaths
+            base = QStandardPaths.writableLocation(
+                QStandardPaths.DesktopLocation) or os.path.expanduser("~")
+        except Exception:            # noqa: BLE001 —— 取不到桌面就退家目录
+            base = os.path.expanduser("~")
+        default = os.path.join(
+            base, "PhoneDesktop-config-%s%s"
+            % (time.strftime("%Y%m%d"), backup.SUFFIX))
+        path, _ = QFileDialog.getSaveFileName(
+            self, i18n.T("backup.export.title"), default,
+            i18n.T("backup.filter"))
+        if not path:
+            return
+        try:
+            payload = backup.export_file(
+                self.storage, path,
+                semver=version.SEMVER, pkg=version.VERSION)
+        except Exception as exc:     # noqa: BLE001 —— 磁盘满/无权限都要说人话
+            QMessageBox.warning(self, i18n.T("backup.export.fail.title"),
+                                str(exc))
+            return
+        c = payload["counts"]
+        QMessageBox.information(
+            self, i18n.T("backup.export.ok.title"),
+            i18n.T("backup.export.ok.body", n=c["layout"],
+                   folders=c["folders"], widgets=c["widgets"], path=path))
+
+    def _import_config(self):
+        """导入备份：校验 → 确认（报清有多少东西）→ 替换 → 重载运行态。
+
+        任何一步失败都不动用户当前配置（`Storage.import_state` 先留档
+        再替换），失败只弹一条说明。
+        """
+        from . import backup
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, i18n.T("backup.import.title"), "", i18n.T("backup.filter"))
+        if not path:
+            return
+        try:
+            payload = backup.read_file(path)
+        except backup.BackupError as exc:
+            QMessageBox.warning(
+                self, i18n.T("backup.import.fail.title"),
+                i18n.T("backup.err.%s" % exc.code, detail=exc.detail))
+            return
+        info = backup.describe(payload)
+        box = QMessageBox(self)
+        box.setWindowTitle(i18n.T("backup.import.confirm.title"))
+        box.setText(i18n.T("backup.import.confirm.body", **info))
+        box.setInformativeText(i18n.T("backup.import.confirm.info"))
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.button(QMessageBox.Yes).setText(i18n.T("backup.import.yes"))
+        box.button(QMessageBox.No).setText(i18n.T("button.cancel"))
+        if box.exec() != QMessageBox.Yes:
+            return
+        try:
+            res = self.storage.import_state(payload["state"])
+        except Exception as exc:     # noqa: BLE001
+            QMessageBox.warning(self, i18n.T("backup.import.fail.title"),
+                                str(exc))
+            return
+        # 运行态：优先窗口的整份重载入口；最小桩（测试）退化为钩子链
+        reload_fn = getattr(self.window, "reload_from_storage", None)
+        if callable(reload_fn):
+            try:
+                reload_fn()
+            except (RuntimeError, AttributeError):
+                self._refresh_grid()
+        else:
+            self._refresh_grid()
+        QMessageBox.information(
+            self, i18n.T("backup.import.ok.title"),
+            i18n.T("backup.import.ok.body", n=res["layout"],
+                   widgets=res["widgets"],
+                   path=res["backup"] or i18n.T("backup.import.ok.nobackup")))
+        # 面板控件是构造时快照：关掉重开，全部按导入后的值重建
+        self.accept()
+        global _dialog
+        _dialog = None
+        QTimer.singleShot(0, lambda: open_settings(
+            self.window, self.storage, self.layer, page="advanced"))
 
     # ---------- v11：更新检测 / 关于作者 ----------
     def _build_update_card(self, body, lay):

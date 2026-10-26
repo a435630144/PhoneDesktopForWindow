@@ -34,9 +34,9 @@ import datetime
 import os
 import sys
 
-VERSION = "14w"
+VERSION = "14x"
 # 对外语义版本。改这里就必须同批改 scripts/installer.iss 的 MyAppVersion。
-SEMVER = "8.3.0"
+SEMVER = "8.3.1"
 
 
 def build_stamp() -> datetime.datetime | None:

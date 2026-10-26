@@ -4,15 +4,15 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.0（v14j）**。本版集中修复与增强：**多次悬停展开导致退出接管**的守护误判、hover 展开的配色/添加应用面板**误关**、文件夹**外部移走文件后自动解散**、编辑组件尺寸**内容消失**、hover 文字**发糊**（标签贴图按当前帧缩放烘焙）、**折叠态液态玻璃文件夹真折射**、玻璃饱和度上移快照层（拖动重算不再抽动）、**渲染频率升级为全局动画帧率**、独立**「关于」页**、组件库**免重启识别新插件**与 UI 收紧、桌面文件**右键复刻原生菜单动词**、图标**悬停高亮/动画自定义**。设置面板 8.2.0 重梳为 8 页并纠正品牌（英文名 PhoneDesktop）。**106 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.1（v14x）**。本版两件事：**配置导出/导入**（设置 ▸ 高级 ▸ 备份与迁移，导入前自动留档，坏包不动现有配置）；**发布包终于对齐 main**——8.3.0 页面上挂的一直是 v14n 构建，v14o–v14w 六批修复（含两个真崩溃）此前没有任何安装包包含。同时补齐图标字号 70%~140%、恢复默认配置、Dock 厚度模型、大文件夹 2×2、悬停展开/关闭时长可调、全局动画帧率（FrameDriver），以及 v14w 的整批性能优化（翻页去全窗重绘、拖拽与命中缓存、缓存上限、日志轮转）。**108 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.3.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-106%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-108%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 一款**界面语言与操作逻辑都走手机路线**的第三方桌面美化软件：它在桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层——位置、动效、文件夹、小组件，全部由你定义。
 
-开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**106 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
+开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**108 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="桌面总览：安卓式网格图标 + 锚定小组件"></p>
 
@@ -208,6 +208,13 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.3.1（v14x）· 2026-10-27 发布包对齐 main + 配置备份/迁移 → [发布说明](docs/release_notes/8.3.1.md)
+
+- **新功能 · 配置导出/导入**：设置 ▸ 高级 ▸ 备份与迁移——把布局、图标、文件夹、组件表与全部设置打包成一个可读 `.pdbak`；导入前自动留档 `state.json.pre-import-*`，坏包/未来版本格式会被明确拒绝且**不动现有配置**；也认裸 `state.json`
+- **发布页资产终于追上 main**：8.3.0 页面上挂的是 v14n 构建，v14o–v14w 六批修复（含两个真崩溃）此前没有任何安装包包含；本版重出两资产
+- **补齐**：图标字号 70%~140%、恢复默认配置、Dock 厚度模型、大文件夹 2×2、悬停展开/关闭时长可调、全局动画帧率（FrameDriver）
+- **性能**：翻页不再每帧全窗重绘、文件夹小图标二次缩放缓存、拖拽命中缓存、NCHITTEST O(1)、壁纸注册表 TTL 1.6s、监控磁盘采样自适应、面板搜索 200ms 防抖、缓存上限、日志 256KB 轮转
 
 ### 8.3.0（v14j）· 2026-10-25 反馈批次：稳定性 + 文件夹交互 + 液态玻璃优化 + 设置新页 → [发布说明](docs/release_notes/8.3.0.md)
 

@@ -989,6 +989,37 @@ class DesktopWindow(QWidget):
             self._widget_layer.apply_layout_mode()
         self.update()
 
+    def reload_from_storage(self):
+        """整份配置被换掉之后（导入备份 / 恢复出厂）重载运行态（v14x）。
+
+        顺序有讲究：
+          1. 退多选态（旧 id 全部作废，留着选中集合只会指向空气）；
+          2. 组件层 `reload_all()` 无条件销毁重建（旧窗口 id 对不上新表）；
+          3. `refresh_grid()` 重算网格快照 + 重建全部图标 + 组件按新几何落位；
+          4. 把「设置派生」的样式类钩子补推一遍（Dock 尺寸/样式、标签、
+             悬停、液态玻璃），否则界面还挂着导入前的样子。
+        设置面板的导入流程只认这一个入口，避免各处各推一套。
+        """
+        if getattr(self, "_selection_mode", False):
+            try:
+                self.exit_selection_mode()
+            except (RuntimeError, AttributeError):
+                self._selection_mode = False
+        layer = getattr(self, "_widget_layer", None)
+        if layer is not None and hasattr(layer, "reload_all"):
+            layer.reload_all()
+        self.refresh_grid()
+        for name in ("apply_dock_settings", "apply_dock_style",
+                     "apply_label_style", "apply_hover_style",
+                     "apply_liquid_style"):
+            fn = getattr(self, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                except (RuntimeError, AttributeError):
+                    pass
+        self.update()
+
     # ---------- 网格原点：手动定位 / 重置（v7 §3.2 / 反馈 21） ----------
     def current_origin(self):
         """当前网格原点 (x, y)——读快照，未就绪时回退桌面默认边距。"""

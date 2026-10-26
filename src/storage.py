@@ -507,6 +507,83 @@ class Storage:
                 except OSError:
                     pass
 
+    # ---------- 备份 / 导入（v14x / 8.3.1） ----------
+    def export_snapshot(self) -> dict:
+        """当前配置的深拷贝——备份包里装的就是这三把键。"""
+        return {
+            "settings": deepcopy(self._data["settings"]),
+            "layout": deepcopy(self._data["layout"]),
+            "widgets": deepcopy(self._data["widgets"]),
+        }
+
+    def import_state(self, state: dict) -> dict:
+        """整份替换配置（用户导入备份）。返回 `{backup, layout, widgets}`。
+
+        实现要点：**不另写一套合并规则**。先把导入内容原子落成
+        state.json，再把内存重置回默认值、调用 `_load()`——走的完全是
+        启动那条路（类型清洗 / schema 迁移 / 归一化 / 各版本兜底规则）。
+        因此"导入后重启一次"与"直接把别人的 state.json 拷过来再启动"
+        逐字段等价，不存在第二套真相。
+
+        改文件前把现有 state.json 复制成 `state.json.pre-import-<时间>`：
+        导错包也是用户数据，不能一键抹掉（与 B9 损坏备份同一原则）。
+        """
+        if not isinstance(state, dict):
+            raise ValueError("state 必须是对象")
+        raw = deepcopy(state)
+        if not isinstance(raw.get("settings"), dict) \
+                or not isinstance(raw.get("layout"), list):
+            raise ValueError("state 缺 settings/layout")
+        Storage._sanitize_raw(raw)
+        if not isinstance(raw.get("widgets"), list):
+            raw["widgets"] = []
+        bak = self._backup_before_import()
+        self._write_raw(raw)
+        self._data = {
+            "settings": deepcopy(DEFAULT_SETTINGS),
+            "layout": [],
+            "widgets": deepcopy(DEFAULT_WIDGETS),
+        }
+        self._load()
+        # 刻意不调 _merge_install_lang：导入的配置里「界面语言」应当以
+        # 备份为准，不能让本机安装器的旁路文件把它盖掉。
+        self.save()
+        return {"backup": bak, "layout": len(self._data["layout"]),
+                "widgets": len(self._data["widgets"])}
+
+    def _backup_before_import(self) -> str:
+        """导入前留档；失败返回空串（不阻断导入，但调用方可提示）。"""
+        try:
+            import datetime
+            import shutil
+            if not os.path.exists(self.path):
+                return ""
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            bak = "%s.pre-import-%s" % (self.path, stamp)
+            shutil.copy2(self.path, bak)
+            return bak
+        except Exception:      # noqa: BLE001 —— 留档失败不该让人导不进来
+            return ""
+
+    def _write_raw(self, raw: dict):
+        """把一份原始 state 原子写到 self.path（临时文件 + fsync + replace）。"""
+        folder = os.path.dirname(os.path.abspath(self.path)) or "."
+        os.makedirs(folder, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(raw, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
+            tmp = None
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+
     @staticmethod
     def _log_save_error(exc):
         log = str(data_file("storage_error.log"))
