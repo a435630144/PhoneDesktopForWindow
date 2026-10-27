@@ -823,8 +823,13 @@ class AppIcon(QWidget):
             lens = liquid_glass.lens_style(storage)
             if getattr(self, "_tile_lens", None) is None:
                 self._tile_lens = liquid_glass.LiveLens()
-            pm = self._tile_lens.pixmap(grect, radius, lens,
-                                        float(self.devicePixelRatioF() or 1.0))
+            pm = self._tile_lens.pixmap(
+                grect, radius, lens,
+                float(self.devicePixelRatioF() or 1.0),
+                # v15b：翻页时整页同速平移，贴图跟着走即可（逐帧重算
+                # = 每个液态瓷砖 1~5ms × 瓷砖数，实测 4 个表面就吃掉
+                # 5ms/帧），落定后自动按新位置重算一次
+                follow_move=liquid_glass.in_motion())
             if pm.isNull():
                 return False
             return liquid_glass.draw_refracted(p, box, radius, pm)

@@ -216,6 +216,20 @@ def master_enabled(storage) -> bool:
     return _flag(_get(storage, "liquid_glass", True), True)
 
 
+def in_motion() -> bool:
+    """整页滑动中（翻页动画）——折射贴图允许"跟着表面走"。
+
+    翻页是**视图动画**：所有表面（瓷砖 / 组件 / Dock 之外的一切）同速平移，
+    每帧按新位置重算折射在视觉上无法区分，却要每个表面 1~5ms。这里只回答
+    "现在是不是在整页滑动"，重算策略留给 `LiveLens.pixmap(follow_move=)`。
+    """
+    try:
+        from . import grid_flow
+        return grid_flow.flip_state() is not None
+    except Exception:            # noqa: BLE001 —— 早期导入 / 替身环境
+        return False
+
+
 def surface_enabled(storage, surface: str) -> bool:
     """某个表面是否允许液态玻璃（总开关一票否决）。
 
@@ -711,13 +725,26 @@ class LiveLens:
         return self._cache_key(rect, radius, lens) != self._key
 
     def pixmap(self, rect, radius: float, lens: Lens,
-               dpr: float = 1.0) -> QPixmap:
+               dpr: float = 1.0, follow_move: bool = False) -> QPixmap:
+        """取这个表面的折射贴图（按矩形/参数/壁纸版本缓存）。
+
+        `follow_move=True`（v15b）：**只在这种情况下允许"位置变了也复用"**
+        ——翻页 / 整页滑动时所有表面同速平移，折射图案跟着表面走与重新
+        采样在视觉上无法区分，而每帧重算 = 每个表面 1~5ms × 表面数：
+        实测一屏 4 个液态表面 × 30 帧 = 120 次重算，光这项就吃掉 5ms/帧。
+        落定后 `follow_move` 变回 False，下一帧自动按新位置重算一次。
+        """
         rect = QRect(rect)
         if rect.isEmpty():
             return QPixmap()
         ver = self.version()
         key = self._cache_key(rect, radius, lens, ver)
         if key == self._key and not self._pm.isNull():
+            return self._pm
+        if (follow_move and self._key is not None and not self._pm.isNull()
+                and key[0] == self._key[0] and key[3:] == self._key[3:]):
+            # 壁纸版本 + 尺寸 + 参数都一致，只有位置不同 -> 直接复用
+            # （不更新 _key：滑动结束后位置再变时自然会重算一次）
             return self._pm
         self._key = key
 
@@ -737,7 +764,11 @@ class LiveLens:
                 # 只烘清晰图，frost=100% 默认档下 _blend_frost 直返未饱和
                 # soft，饱和度静默失效，2026-10-26 自审实测抓到）。裁剪全
                 # 部走饱和快照，拖动重算只剩 C++ copy + 条带位移。
-                sat_wall = wallpaper.saturated(wall, float(lens.saturation))
+                # v15b：frost 拉满时只会用 soft，别烘 4K 清晰图（启动首帧
+                # 的 250ms 大头顶在这里）
+                sat_wall = wallpaper.saturated(
+                    wall, float(lens.saturation),
+                    need_sharp=float(lens.frost) < 0.999)
                 sharp = sat_wall.crop(outer)
                 if not sharp.isNull():
                     k = sharp.width() / max(1.0, float(outer.width()))

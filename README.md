@@ -4,15 +4,15 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.4（v15a）**。最新修复两件 UI 事故：**文件夹重命名的输入框重做**（此前固定 240px 居中，在 240px 的窄弹窗上左右各顶出 40+px，直接压在弹窗外；现在铺在标题带上、夹进弹窗与屏幕，并换成自绘玻璃面），以及**图标字号调大后第二行被裁掉**（布局此前不知道有字号缩放，标签带按 100% 预留；现在按缩放后字号预留，且硬夹在格子内）。上一版修了多选拖动整块跟手。**111 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.4（v15a）**。最新修复两件 UI 事故：**文件夹重命名的输入框重做**（此前固定 240px 居中，在 240px 的窄弹窗上左右各顶出 40+px，直接压在弹窗外；现在铺在标题带上、夹进弹窗与屏幕，并换成自绘玻璃面），以及**图标字号调大后第二行被裁掉**（布局此前不知道有字号缩放，标签带按 100% 预留；现在按缩放后字号预留，且硬夹在格子内）。上一版修了多选拖动整块跟手。**112 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.3.4-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-111%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.3.4-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-112%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 一款**界面语言与操作逻辑都走手机路线**的第三方桌面美化软件：它在桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层——位置、动效、文件夹、小组件，全部由你定义。
 
-开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**111 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
+开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**112 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="桌面总览：安卓式网格图标 + 锚定小组件"></p>
 

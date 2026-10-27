@@ -411,6 +411,24 @@ def attach_to_desktop(widget, below_hwnd: int = 0, layer: int = 0) -> bool:
         return False
 
 
+# 原生图标尺寸缓存（v15b 性能批）。
+#
+# `native_icon_size()` 每次要开注册表（Bags\...\IconSize），失败还要再走一遍
+# SPI_GETICONMETRICS。它被 `Storage.resolved_icon_fit()` 用来解算 medium 档
+# 占比，而后者在**每一次布局计算**里都会被调用：翻页 30 帧 × 104 个图标 =
+# 3090 次 OpenKey（实测 profile），单帧光注册表就 9.8ms。这个值只可能因为
+# 用户拖 explorer 的图标大小滑条而变，1.5s 的 TTL 足够跟上，也远大于翻页
+# 与拖拽的帧间隔。
+NATIVE_ICON_TTL = 1.5
+_native_icon_cache = {"t": 0.0, "v": 0}
+
+
+def invalidate_native_icon_size() -> None:
+    """丢掉原生图标尺寸缓存（换 DPI / 测试打桩后立刻重读）。"""
+    _native_icon_cache["t"] = 0.0
+    _native_icon_cache["v"] = 0
+
+
 def native_icon_size(default: int = 48) -> int:
     """资源管理器当前桌面图标边长（逻辑像素）——「原桌面图标多大」。
 
@@ -420,7 +438,15 @@ def native_icon_size(default: int = 48) -> int:
       2. `SPI_GETICONMETRICS.iIconSize`（老系统 / Bags 缺失时的系统值）；
       3. 回退 default（Windows 默认「中图标」48）。
     夹到 [16, 256]，脏值不至于炸掉网格。
+
+    v15b：结果带 `NATIVE_ICON_TTL` 秒缓存——这是布局计算的热路径，
+    不缓存等于每算一个图标位置就读一遍注册表。
     """
+    import time
+    now = time.monotonic()
+    if (_native_icon_cache["t"]
+            and (now - _native_icon_cache["t"]) < NATIVE_ICON_TTL):
+        return int(_native_icon_cache["v"])
     raw = 0
     try:
         import winreg
@@ -450,7 +476,10 @@ def native_icon_size(default: int = 48) -> int:
             raw = 0
     if not (16 <= raw <= 256):
         raw = int(default)
-    return max(16, min(256, int(raw)))
+    value = max(16, min(256, int(raw)))
+    _native_icon_cache["t"] = now
+    _native_icon_cache["v"] = value
+    return value
 
 
 def native_icon_spacing(default=(75, 75)):

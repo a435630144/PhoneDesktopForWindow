@@ -107,6 +107,8 @@ class DesktopWindow(QWidget):
         # v10 B3：轮播翻页动画（一个标量驱动整页平移，见 goto_page）
         self._flip_anim = None
         self._flip_skip = None      # 拖拽中的条目：翻页帧不挪它的几何
+        # v15b：翻页期间的"落定格点/所属页"缓存（每段动画只算一次）
+        self._flip_bases = None
         self._ole_active = False    # 外部文件 OLE 拖入进行中（拖放目标全窗口）
         self._band_start = None     # 橡皮筋起点（控件坐标）
         self._band_rect = None
@@ -1523,6 +1525,7 @@ class DesktopWindow(QWidget):
         grid_flow.set_page(page)
         self.storage.set_setting("current_page", page)
         self._flip_skip = skip_id
+        self._flip_bases = None     # 页变了，落定格点缓存作废
 
         playing = animate and not effects.reduced_motion()
         if playing:
@@ -1558,18 +1561,36 @@ class DesktopWindow(QWidget):
 
         位置 = 落定格点（`_entry_pos`，逻辑几何全程静止）+ `flip_px`
         （纯视觉瞬移）。所有可见图标读同一份标量，所以整页同向同速滑动。
+
+        v15b：落定格点与所属页在整段动画里**不变**（"逻辑几何静止"正是
+        `flip_px` 存在的理由），所以每帧只该做加法。旧实现每帧对每个图标
+        重算 `_entry_pos` + `entry_page` + `find_entry`：104 个图标 × 30 帧
+        实测 **9.8ms/帧**，profile 里 3090 次 winreg.OpenKey 全从这条链来
+        （`resolved_icon_fit` → `native_icon_size`）。基准一次、逐帧加法。
         """
         skip = self._flip_skip
+        bases = self._flip_bases
+        if bases is None:
+            bases = self._flip_bases = {}
+        offsets = {}
         for eid, icon in self.icons.items():
             if eid == skip:
-                continue          # 拖拽中的条目由拖影代表，几何不参与翻页
-            entry = self.storage.find_entry(eid)
-            if entry is None or icon.isHidden():
                 continue
-            x, y = self._entry_pos(entry)
-            dx, dy = grid_flow.flip_px(
-                self.storage, grid_flow.entry_page(self.storage, entry))
-            icon.move(x + dx, y + dy)
+            if icon.isHidden():
+                continue
+            base = bases.get(eid)
+            if base is None:
+                # 第一次见到（或翻页途中新增的条目）：算一次并记住
+                entry = self.storage.find_entry(eid)
+                if entry is None:
+                    continue
+                base = bases[eid] = (self._entry_pos(entry),
+                                     grid_flow.entry_page(self.storage, entry))
+            (x, y), page = base
+            off = offsets.get(page)
+            if off is None:
+                off = offsets[page] = grid_flow.flip_px(self.storage, page)
+            icon.move(x + off[0], y + off[1])
 
     def _on_flip_step(self, value):
         grid_flow.set_flip_progress(value)
@@ -1585,6 +1606,7 @@ class DesktopWindow(QWidget):
         grid_flow.end_flip()
         self._flip_anim = None
         self._flip_skip = None
+        self._flip_bases = None
         self._settle_flip()
         if self._widget_layer is not None:
             self._widget_layer.settle_flip()
@@ -2017,7 +2039,12 @@ class DesktopWindow(QWidget):
                 layout = self._icon_layout(entry)
                 icon = AppIcon(entry, size, parent=self, chrome_scale=chrome,
                                layout=layout,
-                               label_style=self._label_style())
+                               label_style=self._label_style(),
+                               # v15b：rebuild 与 _add_icon 必须同参——旧实现
+                               # 只在这里漏了 big，于是每次重建（启动 / 改分辨率 /
+                               # 切模式）大文件夹都掉回 1×1 渲染，而布局仍是
+                               # 2×2：瓷砖占着四个格，里面却只画 4 个成员。
+                               big=grid_flow.is_big_folder(self.storage, entry))
                 self._wire_icon(icon)
                 icon.set_selected(entry["id"] in self._selected)
                 icon.set_selection_visible(self._selection_mode)

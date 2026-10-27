@@ -235,7 +235,8 @@ class GlassWidget(FloatingWidget):
         """折射贴图（缓存）：位置 / 壁纸版本 / 参数变了才重算。"""
         lens = liquid_glass.lens_style(self.storage)
         return self._lens.pixmap(self._card_global_rect(), radius, lens,
-                                 float(self.devicePixelRatioF() or 1.0))
+                                 float(self.devicePixelRatioF() or 1.0),
+                                 follow_move=liquid_glass.in_motion())
 
     def _queue_lens_refresh(self) -> None:
         """位置/尺寸变了：把重算压到 ~30fps（拖动时别把主线程拖满）。

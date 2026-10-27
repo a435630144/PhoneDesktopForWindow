@@ -103,20 +103,28 @@ def _saturate_one(image: QImage, factor: float) -> QImage:
         return image
 
 
-def saturated(wall: "Wallpaper", factor: float) -> "Wallpaper":
+def saturated(wall: "Wallpaper", factor: float,
+              need_sharp: bool = True) -> "Wallpaper":
     """整块壁纸的饱和度烘焙版（v14n 修订：image **与** soft 都烘）。
 
     v14j 只烘了清晰图：frost=100%（默认）时 _blend_frost 直接返回未饱和
     的 soft，饱和度静默失效（2026-10-26 自审实测抓到）。这里成对烘焙并
     按 (version, factor) 模块级缓存——换壁纸/改滑条才重烘一次，任何
     frost 档位下裁剪都只是 C++ copy。中性 factor 返回原快照（零拷贝）。
+
+    `need_sharp=False`（v15b）：调用方已经知道磨砂拉满、只会用 soft 时，
+    **别烘 4K 清晰图**——那是 8.3M 像素 × 4 次整图拷贝，实测启动首帧
+    ~250ms，而默认 frost=100% 下这张图从来不会被采样。缓存 key 带上这个
+    标志，切回清透玻璃时自然会再烘一次。
     """
     if wall is None or wall.image.isNull() or abs(factor - 1.0) < 0.004:
         return wall
-    key = (wall.version, round(float(factor), 3))
+    sharp = bool(need_sharp)
+    key = (wall.version, round(float(factor), 3), sharp)
     if _SAT_CACHE["key"] == key and _SAT_CACHE["wall"] is not None:
         return _SAT_CACHE["wall"]
-    sat = Wallpaper(image=_saturate_one(wall.image, factor),
+    sat = Wallpaper(image=(_saturate_one(wall.image, factor) if sharp
+                           else wall.image),
                     soft=_saturate_one(wall.soft, factor),
                     rect=QRect(wall.rect), dpr=wall.dpr,
                     version=wall.version)
