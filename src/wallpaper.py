@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 
 from PySide6.QtCore import QRect, Qt
@@ -60,6 +61,9 @@ class Wallpaper:
     rect: QRect              # 逻辑坐标的虚拟桌面
     dpr: float
     version: int
+    # 跨进程稳定的版本号（0 = 未知/伪造快照，不落盘缓存）。`version`
+    # 用 Python hash，每次启动都变，只能当进程内的缓存键。
+    stable_version: int = 0
 
     # ---------- 取用 ----------
 
@@ -81,10 +85,21 @@ class Wallpaper:
         return self.rect.contains(QRect(rect))
 
 
-def _saturate_one(image: QImage, factor: float) -> QImage:
-    """单张图的饱和度烘焙（PIL，C 速度）。失败/中性返回原图。"""
+def _saturate_one(image: QImage, factor: float, cache_key=None) -> QImage:
+    """单张图的饱和度烘焙（PIL，C 速度）。失败/中性返回原图。
+
+    `cache_key`（v15c）：`(版本, 宽, 高, 百分比)` 给定且命中磁盘缓存时，
+    **连 PIL 都不导入**——PIL 首次 import 要 40ms，加上烘焙 25ms，是首帧
+    液态文件夹最大的一笔；而壁纸不变时这张图每次启动都完全一样。
+    缓存内容是 ARGB32 原始像素（4MB 级），读盘 + copy 约 4ms。
+    """
     if image is None or image.isNull() or abs(factor - 1.0) < 0.004:
         return image
+    path = _sat_cache_path(cache_key) if cache_key else None
+    if path is not None:
+        hit = _read_sat(path, image.width(), image.height())
+        if hit is not None:
+            return hit
     try:
         from PIL import Image, ImageEnhance
         # 快照是 ARGB32_Premultiplied——PIL 的 Color 语义要求**直通 alpha**，
@@ -98,9 +113,95 @@ def _saturate_one(image: QImage, factor: float) -> QImage:
         pil = ImageEnhance.Color(pil).enhance(float(factor))
         out = pil.tobytes("raw", "BGRA")
         # QImage(data, ...) 不拷贝缓冲，Python 侧 out 会被回收——必须 copy()
-        return QImage(out, w, h, w * 4, QImage.Format_ARGB32).copy()
+        result = QImage(out, w, h, w * 4, QImage.Format_ARGB32).copy()
+        if path is not None:
+            _write_sat(path, result)
+        return result
     except Exception:            # noqa: BLE001 —— PIL 缺席就退回原图
         return image
+
+
+# ---------------------------------------------------------------- 饱和度磁盘缓存
+#
+# 只缓存 **soft**（1/3 尺寸，4MB 级）；清晰图 4K 原始像素 33MB，不落盘。
+# 目录 %APPDATA%/.../cache，按壁纸版本 + 尺寸 + 百分比命名，保留最近 4 份。
+
+_SAT_KEEP = 3
+_UNSET = object()            # 哨兵：还没解析过（object() 每次都是新对象，不能比较）
+_SAT_DIR = _UNSET
+
+
+def _sat_cache_dir():
+    global _SAT_DIR
+    if _SAT_DIR is None:
+        return None
+    if _SAT_DIR is not _UNSET:
+        return _SAT_DIR
+    try:
+        from .paths import data_file
+        _SAT_DIR = data_file("cache")
+    except Exception:        # noqa: BLE001
+        _SAT_DIR = None
+        return None
+    return _SAT_DIR
+
+
+def set_sat_cache_dir(path):
+    """测试 / 便携模式注入缓存目录；传 None 关闭落盘。"""
+    global _SAT_DIR
+    _SAT_DIR = None if path is None else Path(path)
+
+
+def _stable_version() -> int:
+    """跨进程稳定的壁纸版本号（`version()` 用的是 Python hash，每次启动都变）。"""
+    import zlib
+    return zlib.crc32("|".join(str(x) for x in _key()).encode("utf-8")) & 0x7FFFFFFF
+
+
+def _sat_cache_path(cache_key):
+    d = _sat_cache_dir()
+    if d is None:
+        return None
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    ver, w, h, pct = cache_key
+    return d / ("sat_%d_%d_%dx%d.bin" % (int(ver), int(pct), int(w), int(h)))
+
+
+def _read_sat(path: Path, w: int, h: int) -> Optional[QImage]:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if len(data) != int(w) * int(h) * 4:
+        return None                     # 半截文件 / 尺寸不符：当作未命中
+    return QImage(data, w, h, w * 4, QImage.Format_ARGB32).copy()
+
+
+def _write_sat(path: Path, image: QImage) -> None:
+    try:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_bytes(image.constBits().tobytes())
+        os.replace(tmp, path)
+        _prune_sat(path.parent)
+    except OSError:
+        pass
+
+
+def _prune_sat(folder: Path) -> None:
+    """只留最近 _SAT_KEEP 份（换壁纸会生成新文件，不清会越积越多）。"""
+    try:
+        files = sorted(folder.glob("sat_*.bin"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for old in files[_SAT_KEEP:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 def saturated(wall: "Wallpaper", factor: float,
@@ -123,11 +224,17 @@ def saturated(wall: "Wallpaper", factor: float,
     key = (wall.version, round(float(factor), 3), sharp)
     if _SAT_CACHE["key"] == key and _SAT_CACHE["wall"] is not None:
         return _SAT_CACHE["wall"]
+    # soft 走磁盘缓存：壁纸不变时连 PIL 都不导入（见 _saturate_one）
+    soft_key = None
+    if (wall.stable_version and wall.soft is not None
+            and not wall.soft.isNull()):
+        soft_key = (wall.stable_version, wall.soft.width(), wall.soft.height(),
+                    int(round(float(factor) * 100)))
     sat = Wallpaper(image=(_saturate_one(wall.image, factor) if sharp
                            else wall.image),
-                    soft=_saturate_one(wall.soft, factor),
+                    soft=_saturate_one(wall.soft, factor, cache_key=soft_key),
                     rect=QRect(wall.rect), dpr=wall.dpr,
-                    version=wall.version)
+                    version=wall.version, stable_version=wall.stable_version)
     _SAT_CACHE["key"] = key
     _SAT_CACHE["wall"] = sat
     return sat
@@ -371,7 +478,8 @@ def snapshot(refresh: bool = False) -> Optional[Wallpaper]:
         _CACHE.update(key=key, wall=None, t=time.monotonic())
         return None
     wall = Wallpaper(image=image, soft=_soft(image), rect=QRect(rect),
-                     dpr=dpr, version=hash(key) & 0x7FFFFFFF)
+                     dpr=dpr, version=hash(key) & 0x7FFFFFFF,
+                     stable_version=_stable_version())
     _CACHE.update(key=key, wall=wall, t=time.monotonic())
     return wall
 

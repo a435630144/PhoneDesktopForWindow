@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.3.4 (v15a)**. Two UI bugs fixed: **the folder-rename field was rebuilt** (it used to be a fixed 240 px box centred on the title band, so on a 240 px popup it stuck out ~40 px on both sides over the wallpaper; it now spans the title band, clamps into the popup and the screen, and paints its own glass surface), and **larger icon font no longer clips the second label line** (the layout never knew about the font-scale knob and reserved label height for 100%; it now reserves for the scaled font and is hard-clamped to the cell). The previous release made multi-selection drags move as one block. **112 test files green**.
+> 🚧 **Under active development**: the latest release is **8.4.0 (v15c)** — performance plus big-folder placement fixes. Flipping a page now costs 10ms instead of 42ms per frame, and startup drops three pieces of wasted work: on-demand imports (−50 ms), `set_dock` no longer rebuilds every icon (−55 ms), and the wallpaper saturation bake is cached on disk (89 ms cold → 6 ms warm, without importing PIL at all). The 2×2 folder tile can no longer be dropped onto the last column, the page bottom or on top of another icon — it used to reserve a single cell, spill across pages and bury icons underneath. **114 test files green**.
 
-[![release](https://img.shields.io/badge/release-v8.3.4-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-112%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.4.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-114%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -207,6 +207,12 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.4.0 (v15c) · 2026-10-28 performance batch + big-folder placement → [notes](docs/release_notes/8.4.0.md)
+
+- **Performance**: page flip 42 → 10–13 ms per frame (per-entry landing cache, refracted texture reuse via `follow_move`, `native_icon_size` TTL); three pieces of wasted startup work removed (lazy settings/add-app imports, `set_dock` no longer rebuilding 100+ icons, wallpaper saturation cached on disk: 89 ms cold → 6 ms warm with no PIL import)
+- **Fixes**: a 2×2 folder tile dropped on the last column / page bottom / over another icon used to reserve one cell, spill across pages and bury icons; multi-selection drags and `compact/tidy/pack` had the same one-cell assumption; `rebuild()` forgot `big=` so tiles fell back to 1×1 after any rebuild
+- New `tools/perf_probe.py` (reproducible benchmark incl. full assembly) and 50 new assertions (big_folder_bounds 24 + wallpaper_cache 11 + perf_batch 15)
 
 ### 8.3.4 (v15a) · 2026-10-27 rename field rebuilt + large icon fonts no longer clip → [notes](docs/release_notes/8.3.4.md)
 

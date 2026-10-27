@@ -63,8 +63,9 @@ def fake_wallpaper():
     p.end()
     soft = img.scaled(w // 3, h // 3, Qt.IgnoreAspectRatio,
                       Qt.SmoothTransformation)
+    # stable_version 非 0 = 允许饱和度落盘缓存（整机装配按"热启动"量）
     return Wallpaper(image=img, soft=soft, rect=QRect(0, 0, 1920, 1080),
-                     dpr=2.0, version=7)
+                     dpr=2.0, version=7, stable_version=7700)
 
 
 def build_state(tmp, n_apps=100):
@@ -99,6 +100,52 @@ def build_state(tmp, n_apps=100):
     st._data["layout"] = layout
     st.save()
     return st
+
+
+def measure_assembly(app) -> None:
+    """整机装配：窗口 + 组件层 + Dock（main.py 的真实顺序）。
+
+    单独用一份 state 与窗口来量，不污染主测量。判据只看"装配总耗时"——
+    典型回退是**冗余重建**（历史上 `set_dock` 会把 100+ 图标重建一遍，
+    实测 +55ms），所以这里把 set_dock 单独打出来。
+    """
+    from src.dock import DockWindow, seed_from_layout
+    from src.desktop_window import DesktopWindow
+    from src.widget_layer import WidgetLayer
+    from src import grid_flow
+
+    tmp = Path(tempfile.mkdtemp(prefix="perf-asm-"))
+    # 热启动：先把 saturated 的磁盘缓存捂热，再清掉进程内缓存——
+    # 与"用户第二次开程序"等价（PIL 不必导入）。
+    from src import wallpaper as _wall
+    _wall.set_sat_cache_dir(tmp / "satcache")
+    _wall.saturated(fake_wallpaper(), 1.4, need_sharp=False)
+    _wall._SAT_CACHE["key"] = None
+    _wall._SAT_CACHE["wall"] = None
+    st = build_state(tmp)
+    grid_flow.set_grid(st, (1920, 1040))
+    seed_from_layout(st)            # 与 main.py 同序：先填 Dock 再建窗口
+    t0 = time.perf_counter()
+    win = DesktopWindow(st)
+    win.setAttribute(Qt.WA_DontShowOnScreen, True)
+    win.setGeometry(0, 0, 1920, 1040)
+    win.show()
+    win._update_grid_metrics()      # 真实启动：挂载成功后的首次度量
+    app.processEvents()
+    t1 = time.perf_counter()
+    layer = WidgetLayer(st)
+    win.set_widget_layer(layer)
+    dock = DockWindow(st)
+    t2 = time.perf_counter()
+    win.set_dock(dock)
+    app.processEvents()
+    t3 = time.perf_counter()
+    print("启动（整机装配）                 %7.1f ms"
+          "（窗口 %.1f + 组件层/Dock 构建 %.1f + set_dock %.1f）"
+          % ((t3 - t0) * 1000.0, (t1 - t0) * 1000.0,
+             (t2 - t1) * 1000.0, (t3 - t2) * 1000.0))
+    win.close()
+    dock.close()
 
 
 def main() -> int:
@@ -221,6 +268,9 @@ def main() -> int:
 
     ms, best = bench(popup_open, repeat=5)
     print("文件夹弹窗（构建+首帧）          %7.2f ms（最好 %.2f）" % (ms, best))
+
+    # ---- 整机装配（另起一份 state；放在最后，不污染上面的读数） ----
+    measure_assembly(app)
 
     # ---- 壁纸快照 ----
     liquid_glass.refract = real_refract

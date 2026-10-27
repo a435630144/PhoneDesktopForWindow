@@ -84,17 +84,35 @@ from PySide6.QtWidgets import QApplication         # noqa: E402
 from src import autostart                          # noqa: E402
 from src import onboarding                         # noqa: E402
 from src import win32_layer                        # noqa: E402
-from src.add_apps_dialog import AddAppsDialog      # noqa: E402
 from src.desktop_window import DesktopWindow       # noqa: E402
 from src.dock import DockWindow, seed_from_layout  # noqa: E402
 from src.paths import asset_path, ensure_app_dirs  # noqa: E402
-from src.settings_dialog import SettingsDialog, open_settings   # noqa: E402
 from src import widget_plugin                     # noqa: E402
 from src.single_instance import SingleInstance     # noqa: E402
 from src import i18n                               # noqa: E402
 from src.storage import Storage                    # noqa: E402
 from src.tray import SystemTray                    # noqa: E402
 from src.widget_layer import WidgetLayer           # noqa: E402
+
+
+def _open_settings(window, storage, layer, page=None):
+    """按需导入设置面板（v15c：冷启动省 ~130ms）。
+
+    `src.settings_dialog` 会连带拉起 `src.updater`（requests/SSL 一整条链），
+    而启动路径上**没有任何一处**需要它——只有用户真的点设置才需要。放在
+    函数里导入，冻结包同样能被打包器静态发现（PyInstaller 扫 import 语句，
+    不看它在哪一层）。
+    """
+    from src.settings_dialog import open_settings
+    if page is None:
+        return open_settings(window, storage, layer)
+    return open_settings(window, storage, layer, page=page)
+
+
+def _open_add_apps(window):
+    """按需导入添加应用对话框（同理：启动时不建它，省 ~60ms 导入）。"""
+    from src.add_apps_dialog import AddAppsDialog
+    return AddAppsDialog(window).exec()
 
 
 def main() -> int:
@@ -136,6 +154,10 @@ def main() -> int:
     # 保证升级/重装后网格不空（旧版 migrate_to_native_mode 会清空网格并
     # 关闭整理模式，已废弃为 no-op）。
     storage.ensure_desktop_clone()
+    # v15c：Dock 首次填充要在**建窗口之前**——`_dock_inset()` 读 storage，
+    # 条带厚度随条目数变化；晚填会让首次网格按"没有 Dock"算一遍，
+    # `set_dock` 再按真实 inset 重建一次（100+ 图标，实测 +20~55ms）。
+    seed_from_layout(storage)
 
     window = DesktopWindow(storage)
     window.show_desktop()
@@ -146,8 +168,7 @@ def main() -> int:
 
     # v10 C3（反馈 17）：Dock 栏。首次启用用桌面上现成的应用填一次
     # （`dock_seeded` 只填一次——用户手动清空后不会被重新塞满），
-    # 再交给窗口接线：`set_dock` 会按条带 inset 重算网格并重排图标。
-    seed_from_layout(storage)
+    # 再交给窗口接线。
     dock_bar = DockWindow(storage)
     window.set_dock(dock_bar)
     # v11（反馈 31）：桌面上的 Ctrl+C / Ctrl+V。桌面窗口是 WS_EX_NOACTIVATE
@@ -168,10 +189,10 @@ def main() -> int:
 
     tray = SystemTray(window, storage, layer)
     # v9 V2：设置面板改单例 + 非模态（托盘/桌面右键/组件库共用同一个窗口）
-    tray.openSettings = lambda: open_settings(window, storage, layer)
-    tray.openAddApps = lambda: AddAppsDialog(window).exec()
-    tray.openWidgetCenter = lambda: open_settings(window, storage, layer,
-                                                 page="widgets")
+    tray.openSettings = lambda: _open_settings(window, storage, layer)
+    tray.openAddApps = lambda: _open_add_apps(window)
+    tray.openWidgetCenter = lambda: _open_settings(window, storage, layer,
+                                                   page="widgets")
     window.openSettingsRequested.connect(tray.openSettings)
     window.openAddAppsRequested.connect(tray.openAddApps)
     window.openWidgetCenterRequested.connect(tray.openWidgetCenter)

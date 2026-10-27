@@ -1123,7 +1123,15 @@ class DesktopWindow(QWidget):
                     return None
             except Exception:      # noqa: BLE001
                 pass
-        return cell
+        # v15c（P2-3）：大文件夹 2×2 必须整块留在网格与落点页内。
+        # 预览红框 / 松手提交共用本函数，夹一次两边就不会漂移。
+        return grid_flow.clamp_big_target(
+            self.storage, self.storage.find_entry(self._drag_entry_id or ""), cell)
+
+    def _drag_span(self):
+        """拖动中的条目占几格（大文件夹 2×2，其余 1×1）——红框与占格同源。"""
+        entry = self.storage.find_entry(self._drag_entry_id or "")
+        return (2, 2) if grid_flow.is_big_folder(self.storage, entry) else (1, 1)
 
     def _hl_rect(self, cell, span) -> QRect:
         """红框的窗口矩形（空 cell 返回空矩形）。绘制与脏区共用同一份定义。"""
@@ -1296,7 +1304,18 @@ class DesktopWindow(QWidget):
         self._dock = dock_window
         if dock_window is not None:
             dock_window.apply_geometry((self.width(), self.height()))
-        self.refresh_grid()
+        # v15c：以前这里调 `refresh_grid()`，它会把布局签名打成哨兵值，
+        # **无条件重建全部图标**。可网格的扣减入口是 `_dock_inset()`——
+        # 只读 storage，首次构建就已经把条带算进去了；启动路径
+        # （main.py 先 show 再 set_dock）于是白重建 100+ 个图标（实测 69ms）。
+        # 走 `_update_grid_metrics()`：几何真变了（运行时开关 Dock /
+        # 换位置）才因签名不等而重建，没变就只做一次移动校平。
+        before = grid_flow.current_metrics()
+        self._update_grid_metrics()
+        # 组件层只在网格真的变了才重排（启动路径里它刚建好，重排一次 8ms）
+        if (self._widget_layer is not None
+                and before != grid_flow.current_metrics()):
+            self._widget_layer.apply_layout_mode()
 
     def apply_dock_settings(self):
         """Dock 开关 / 位置 / 外观过变化：重排条带 + 重算网格。
@@ -2525,7 +2544,8 @@ class DesktopWindow(QWidget):
                 self._push_dragged = dragged
                 self._push_timer.start()
             return
-        self._set_highlight(cell)       # v6 §5.2：红框跟随面积判定结果
+        # v6 §5.2：红框跟随面积判定结果；v15c 起按条目真实占位画（2×2）
+        self._set_highlight(cell, self._drag_span())
         self._reflow_preview(dragged, cell)
 
     # ---------- 边缘悬停翻页（反馈 8，手机 launcher 语义） ----------
@@ -2647,7 +2667,7 @@ class DesktopWindow(QWidget):
             return
         pos = self.mapFromGlobal(QPoint(gx, gy))
         cell = self._drag_cell(pos)
-        self._set_highlight(cell)
+        self._set_highlight(cell, self._drag_span())
         self._reflow_preview(dragged, cell)
 
     def _on_reflow_drop(self, dragged: str, gx: int, gy: int):
@@ -3053,9 +3073,14 @@ class DesktopWindow(QWidget):
         src = by_id.get(dragged_id)
         if src is None:
             return {}
+        # v15c（P2-3）：大文件夹落点先夹进网格与所在页——否则 2×2 会
+        # 出界（贴右列时不登记占用）或跨页（页底行派生格落到下一页）。
+        cell = grid_flow.clamp_big_target(self.storage, src, cell)
         old = (int(src.get("col", 0)), int(src.get("row", 0)))
         if cell == old:
             return {}
+        big = grid_flow.is_big_folder(self.storage, src)
+        block = set(grid_flow.big_block_cells(cell) if big else [cell])
         occupant = None
         for e in self.storage.layout:
             if e.get("id") == dragged_id:
@@ -3068,6 +3093,32 @@ class DesktopWindow(QWidget):
         moves = {dragged_id: cell}
         if occupant is not None:
             moves[occupant["id"]] = old    # 交换到源格
+        if big:
+            # 2×2 里其余三格上的图标必须让开（旧实现只看主格，落位后
+            # 它们直接叠在瓷砖底下——既不显示也点不到）。用与组件挤位
+            # 同一套 `displace_cells`：页内就近、同行优先、互不重复。
+            blocked = set(block) | set(grid_flow.widget_cells(self.storage))
+            stuck = []          # [(原格, entry)]
+            for e in self.storage.layout:
+                eid = e.get("id")
+                if eid == dragged_id or eid in moves:
+                    continue
+                ec = (int(e.get("col", 0)), int(e.get("row", 0)))
+                if ec in block:
+                    stuck.append((ec, e))
+                    continue
+                blocked.add(ec)
+                if grid_flow.is_big_folder(self.storage, e):
+                    blocked.update(grid_flow.big_block_cells(ec))
+            if stuck:
+                rpp = max(1, int(grid_flow.rows_per_page()))
+                page = grid_flow.page_of(int(cell[1]))
+                dests = grid_flow.displace_cells(
+                    [c for c, _e in stuck], blocked,
+                    int(self.storage.columns),
+                    (page * rpp, page * rpp + rpp - 1))
+                for ec, e in stuck:
+                    moves[e.get("id")] = dests[ec]
         return moves
 
     def _apply_preview_moves(self, dragged_id: str, moves: dict):

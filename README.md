@@ -4,15 +4,15 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.3.4（v15a）**。最新修复两件 UI 事故：**文件夹重命名的输入框重做**（此前固定 240px 居中，在 240px 的窄弹窗上左右各顶出 40+px，直接压在弹窗外；现在铺在标题带上、夹进弹窗与屏幕，并换成自绘玻璃面），以及**图标字号调大后第二行被裁掉**（布局此前不知道有字号缩放，标签带按 100% 预留；现在按缩放后字号预留，且硬夹在格子内）。上一版修了多选拖动整块跟手。**112 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.4.0（v15c）**。本批是**性能批 + 大文件夹落位修复**：翻页单帧 42→10ms、启动省掉三笔白工（按需导入 −50ms、`set_dock` 不再重建 −55ms、壁纸饱和度磁盘缓存 −60ms）；修掉大文件夹（2×2 瓷砖）**拖到最后一列/页底/别人头上就压格、跨页、出界**，以及多选整块、重新扫描/整理布局同样只把它当 1 格的老问题。**114 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.3.4-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-112%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.4.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-114%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
 一款**界面语言与操作逻辑都走手机路线**的第三方桌面美化软件：它在桌面之上挂载一层自有网格，把原生图标替换为完全可控的渲染层——位置、动效、文件夹、小组件，全部由你定义。
 
-开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**112 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
+开发深度上它**早已不是原型 Demo**：安装包 + 托盘常驻 + 崩溃日志 + 单实例 + 自动重挂守护，**114 个测试文件**。产品名 **掌镜桌面**（英文 PhoneDesktop，与 installer.iss `MyAppNameEn` 同源；exe 名与数据目录保持 PhoneDesktop 不变，避免老用户数据路径失效）。
 
 <p align="center"><img src="docs/images/01-desktop.png" width="900" alt="桌面总览：安卓式网格图标 + 锚定小组件"></p>
 
@@ -208,6 +208,12 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.4.0（v15c）· 2026-10-28 性能批 + 大文件夹落位修复 → [发布说明](docs/release_notes/8.4.0.md)
+
+- **性能**：翻页单帧 42→10–13ms（落定格点按条目缓存、折射 `follow_move` 复用、`native_icon_size` TTL）；启动三笔白工——设置面板/添加应用按需导入、`set_dock` 不再重建 100+ 图标、壁纸饱和度烘焙落盘缓存（冷 89ms → 热 6ms，且不再导入 PIL）
+- **修复**：大文件夹 2×2 拖到最后一列 / 页底 / 别人头上会压格、跨页、出界；多选整块与 `compact/tidy/pack` 也只把它当 1 格；顺带修 `rebuild()` 漏传 `big=`（重建后瓷砖掉回 1×1）
+- 新增 `tools/perf_probe.py`（可复现基准，含整机装配）与 50 项新断言（big_folder_bounds 24 + wallpaper_cache 11 + perf_batch 15）
 
 ### 8.3.4（v15a）· 2026-10-27 重命名输入框重做 + 字号放大不再切掉第二行 → [发布说明](docs/release_notes/8.3.4.md)
 

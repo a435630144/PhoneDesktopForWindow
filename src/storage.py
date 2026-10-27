@@ -279,14 +279,27 @@ def entry_app(entry) -> dict:
 
 def _big_block_used(gf, storage, entry, col, row, cols, used) -> bool:
     """大文件夹 2×2 占格登记（v14t）。右边贴边放不下时把起点推进到
-    下一行行首（调用方循环继续扫描），返回是否成功落在 (col,row)。"""
+    下一行行首（调用方循环继续扫描），返回是否成功落在 (col,row)。
+
+    v15c：原来只登记派生格、**不检查**它们是否已被占（组件占位、Dock
+    禁放格都是预先塞进 `used` 的），且不检查页底——瓷砖会压住组件或
+    被页边界切成两半。现在整块四格都验，越界/占用一律返回 False。
+    """
     if not gf.is_big_folder(storage, entry):
         return True
     if col + 1 >= cols:
         return False
-    used.add((col + 1, row))
-    used.add((col, row + 1))
-    used.add((col + 1, row + 1))
+    rpp = max(1, int(gf.rows_per_page()))
+    page_hi = (int(row) // rpp) * rpp + rpp - 1
+    if row + 1 > page_hi:
+        return False
+    cells = gf.big_block_cells((col, row))
+    extra = [c for c in cells if c != (col, row)]
+    # 主格由调用方的 `(col, row) in used` 判定（登记时那一格已经在 used 里，
+    # 这里再判会把"登记"这一步也挡掉）；派生格才是本函数的职责。
+    if any(c in used for c in extra):
+        return False
+    used.update(extra)
     return True
 
 class Storage:
@@ -896,10 +909,39 @@ class Storage:
                         key=lambda x: (x.get("row", 0), x.get("col", 0))):
             col = max(0, min(cols - 1, int(e.get("col", 0))))
             row = max(0, int(e.get("row", 0)))
+            # v15c（P2-3 同族）：大文件夹是 2×2，占格/边界都要按整块算。
+            # 旧实现只看 (col,row) 一格——新文件会被补进瓷砖底下，
+            # 贴右列/页底时还会让 2×2 出界或跨页。
+            if grid_flow.is_big_folder(self, e):
+                col, row = self._big_block_place(grid_flow, col, row, cols,
+                                                 used | widget_used)
+                used.update(grid_flow.big_block_cells((col, row)))
+                e["col"], e["row"] = col, row
+                continue
             if (col, row) in used or (col, row) in widget_used:
                 col, row = self._first_free_cell(extra_used=used | widget_used)
             used.add((col, row))
             e["col"], e["row"] = col, row
+
+    def _big_block_place(self, grid_flow, col, row, cols, blocked):
+        """为 2×2 瓷砖找落点：先夹进所在页，再按阅读序找第一块整块放得下
+        的位置（每页都从自己的行范围取页底，绝不跨页）。
+
+        找不到时兜底返回夹紧后的起点（宁可重叠也不丢条目——与
+        `multi_move` 的"超高块对齐页顶"同策）。
+        """
+        page_lo, page_hi = grid_flow.page_rows_of(row)
+        col, row = grid_flow.clamp_big_cell((col, row), cols, (page_lo, page_hi))
+        for _ in range(4096):
+            page_lo, page_hi = grid_flow.page_rows_of(row)
+            if (col + 1 < cols and row + 1 <= page_hi
+                    and all(c not in blocked
+                            for c in grid_flow.big_block_cells((col, row)))):
+                return col, row
+            col += 1
+            if col + 1 >= cols:
+                col, row = 0, row + 1
+        return max(0, min(col, max(0, cols - 2))), row
 
     def tidy_layout(self, pages=None):
         """显式整理：按 (row, col) 排序后顺序铺满为连续网格（用户主动触发）。

@@ -65,6 +65,53 @@ def is_big_folder(storage, entry) -> bool:
     return bool(entry.get("big"))
 
 
+def big_block_cells(cell):
+    """2×2 瓷砖占的 4 格（含主格）。是否越界由调用方判断。"""
+    c, r = int(cell[0]), int(cell[1])
+    return [(c, r), (c + 1, r), (c, r + 1), (c + 1, r + 1)]
+
+
+def clamp_big_cell(cell, cols, page_rows=None):
+    """把大文件夹落点夹进网格与**落点所在页**，保证 2×2 完整可见。
+
+    P2-3（2026-10-28）：`_free_moves` 只看主格，于是
+
+      * 拖到最后一列 —— `big_extra_cells()` 贴边返回 None，右侧与下行
+        三格**不登记占用**：瓷砖压着别人、别人也压着瓷砖；
+      * 拖到页底行 —— 派生格落到下一页（页 = `row // rows_per_page`），
+        2×2 被页边界切成两半（用户报的就是"下面两个被挤到下一个分页"的
+        同族问题，只是这次是瓷砖本身）。
+
+    语义与 `multi_move(page_rows=)` 对齐：贴边**整体**内移，形状守恒；
+    放不下（只有 1 列 / 页高不足 2 行）时退到起点，绝不抛异常。
+    """
+    c, r = int(cell[0]), int(cell[1])
+    n = max(1, int(cols))
+    c = max(0, min(c, n - 2)) if n >= 2 else 0
+    if page_rows is None:
+        r = max(0, r)
+    else:
+        top, bottom = int(page_rows[0]), int(page_rows[1])
+        r = max(top, min(r, bottom - 1)) if bottom - top + 1 >= 2 else top
+    return (c, r)
+
+
+def clamp_big_target(storage, entry, cell):
+    """大文件夹的落点夹紧（非大文件夹 / 无界模式原样返回）。
+
+    无界模式不占格、允许重叠（见 `occupied_cells` 的 storage 分支），
+    2×2 只是视觉尺寸，不该被网格边界绑住。
+    """
+    if cell is None or not is_big_folder(storage, entry):
+        return cell
+    if free_mode(storage):
+        return cell
+    rpp = max(1, int(rows_per_page()))
+    page = page_of(int(cell[1]))
+    return clamp_big_cell(cell, int(getattr(storage, "columns", 1) or 1),
+                          (page * rpp, page * rpp + rpp - 1))
+
+
 def big_extra_cells(entry, cols: int):
     """大文件夹瓷砖除自身格外占用的 3 格（右/下/右下）。
 
@@ -471,6 +518,13 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
     if len(set(src.values())) != len(sel):
         return None  # 选中成员占位格重复（相对偏移无定义）
 
+    def _big(i) -> bool:
+        """选中成员里的大文件夹：真实 footprint 是 2×2，不是 1 格。"""
+        return is_big_folder(None, by_id[i])
+
+    def _fp(i, cell) -> list:
+        return big_block_cells(cell) if _big(i) else [cell]
+
     extra = set(extra_occupied or ())
     icon_cell = {}
     for e, c in zip(entries, cells):
@@ -491,9 +545,11 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
     for i in sel:
         want[i] = (land[0] + (src[i][0] - pcol), land[1] + (src[i][1] - prow))
     min_c = min(c for c, _ in want.values())
-    max_c = max(c for c, _ in want.values())
+    # 边界按**真实 footprint**算：大文件夹的右/下边各多占一格。不这么算，
+    # 整块夹紧会让瓷砖贴到最后一列/页底行——2×2 出界或跨页（v15c）。
+    max_c = max(want[i][0] + (1 if _big(i) else 0) for i in sel)
     min_r = min(r for _, r in want.values())
-    max_r = max(r for _, r in want.values())
+    max_r = max(want[i][1] + (1 if _big(i) else 0) for i in sel)
     shift_c = -min_c if min_c < 0 else 0
     if max_c + shift_c > cols - 1:
         shift_c = (cols - 1) - max_c
@@ -514,7 +570,9 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
     finals = {i: (want[i][0] + shift_c, want[i][1] + shift_r) for i in sel}
 
     # c. 成员级组件占位顺延（主条目已在 a 解析；按阅读序，主条目优先）
-    taken = set(finals.values())
+    taken = set()
+    for i in sel:
+        taken.update(_fp(i, finals[i]))
     nomove = {c: i for c, i in icon_cell.items() if i not in sel_set}
     for i in sorted(sel, key=lambda x: (finals[x][1], finals[x][0],
                                         x != primary_id)):
@@ -534,13 +592,17 @@ def multi_move(entries: Sequence[dict], cols: int, primary_id: str,
     #    接着占住，旧的"直接顺延"会把下方两个图标甩到本行右侧——用户看到
     #    的是"让位图标乱飞"。整块平移真正让出来的是那一行空格，回填它才
     #    符合"东西往上补位"的直觉。
-    occupied = set(finals.values())
+    occupied = set(taken)
     moving = sorted(c for c in nomove if c in occupied)
     staying = set(nomove) - set(moving)
-    vacated = set(src.values()) - occupied - staying - extra
+    vacated = set()
+    for i in sel:
+        vacated.update(_fp(i, src[i]))
+    vacated -= occupied | staying | extra
     for c in moving:
         xid = nomove[c]
-        member = next(i for i in sel if finals[i] == c)
+        # 谁占了这一格：可能是成员主格，也可能是大文件夹的派生格
+        member = next((i for i in sel if c in _fp(i, finals[i])), primary_id)
         dest = src[member]
         if not (0 <= dest[0] < cols) or dest in extra \
                 or dest in occupied or dest in staying:
