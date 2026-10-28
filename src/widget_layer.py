@@ -163,10 +163,16 @@ class WidgetLayer(QObject):
         self.widgets[entry["id"]] = w
         self._spawned.append(weakref.ref(w))
         w.show()
+        # v15d：总开关关着（「显示桌面小组件」= 关）时，新 spawn 的窗口
+        # 也必须隐藏。旧实现只有 __init__ 统一 hide 一次，启动后再从组件库
+        # 添加 / 从设置里"显示"的组件会照常出现在桌面上，重启才消失——
+        # 用户看到"关掉了还能加出来"。
+        if not bool(self.storage.get_setting("show_widgets")):
+            w.hide()
         # v6 §4：不在当前页的锚定组件隐藏——组件是**顶层窗口**（不像
         # 图标是桌面窗口子控件会被裁剪），静止态露在屏顶/屏底就是半截
         # 渲染；翻到它的页由 sync_page 显示
-        if entry.get("anchored"):
+        elif entry.get("anchored"):
             # v7 B2：页归属走 entry_page（无界读 fpage，网格读 row）
             if grid_flow.entry_page(self.storage, entry) != grid_flow.current_page():
                 w.hide()
@@ -234,6 +240,14 @@ class WidgetLayer(QObject):
         for entry in self.storage.widgets:
             self._place_default(entry)      # 跨机导入可能压根没有 x/y
             self._spawn(entry)
+        # v15d：总开关跟着新配置走。导入/恢复默认后 show_widgets 可能
+        # 从 False 变回 True（或反之），旧实现只重建窗口不重设可见性，
+        # 用户看到"开了显示却还是空的"。开的时候走 sync_page 而不是
+        # set_visible(True)——后者会把其它页的锚定组件一起亮出来。
+        if not bool(self.storage.get_setting("show_widgets")):
+            self.set_visible(False)
+        else:
+            self.sync_page(grid_flow.current_page())
         self.sweep_orphans()
         self.widgetsChanged.emit()
 
@@ -417,8 +431,22 @@ class WidgetLayer(QObject):
         self._spawn(entry)
 
     def set_visible(self, on: bool):
+        """组件总显隐（设置开关 / 纯净模式 / 仅组件模式共用）。
+
+        v15d：开启时不能无脑 `setVisible(True)`——锚定组件是**按页归属**
+        显示的（别的页的组件是顶层窗，全亮出来会叠在当前页上）。关掉
+        「显示桌面小组件」再打开、或纯净模式退出，都走这里；旧实现会把
+        所有页的组件一起亮出来，翻页后才发现"组件穿页了"。
+        """
+        on = bool(on) and bool(self.storage.get_setting("show_widgets"))
+        page = grid_flow.current_page()
         for w in self.widgets.values():
-            w.setVisible(on)
+            if not on:
+                w.setVisible(False)
+            elif getattr(w, "anchored", False):
+                w.setVisible(grid_flow.entry_page(self.storage, w.entry) == page)
+            else:
+                w.setVisible(True)
 
     def flush_pending(self):
         """B14：把所有组件防抖未落盘的数据立即刷进 entry（退出前调用）。"""
@@ -540,6 +568,14 @@ class WidgetLayer(QObject):
                 break
         if not removed:
             return False
+        # v15d：内置组件（clock/notes/panel）删除后要留墓碑，否则
+        # Storage._migrate 下次加载又按 id 补齐（"删除时钟 → 重启又回来"）。
+        from .storage import DEFAULT_WIDGETS
+        if entry_id in {w.get("id") for w in DEFAULT_WIDGETS}:
+            dead = list(self.storage.get_setting("widgets_removed") or [])
+            if entry_id not in dead:
+                dead.append(entry_id)
+                self.storage.set_setting("widgets_removed", dead)
         self.storage.save()
         self.widgetsChanged.emit()
         self.gridChanged.emit()

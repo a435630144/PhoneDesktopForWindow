@@ -476,7 +476,15 @@ class Storage:
            + 自动播种；**只升一次**，之后尊重用户在设置里的手动选择。
         """
         existing = {w.get("id") for w in self._data["widgets"]}
+        # v15d：用户删掉的内置组件不能每次启动都复活。旧实现只按 id 补齐，
+        # 「删除时钟」→ 重启 → 时钟又回来了（用户：删不掉）。删除时把 id
+        # 记进 settings["widgets_removed"]，这里跳过；恢复默认会清空这份
+        # 名单（见 reset_settings）。
+        removed = self._data["settings"].get("widgets_removed")
+        removed = set(removed) if isinstance(removed, list) else set()
         for w in DEFAULT_WIDGETS:
+            if w.get("id") in removed:
+                continue
             if w.get("id") not in existing:
                 self._data["widgets"].append(deepcopy(w))
         if raw_schema < 2:
@@ -860,8 +868,21 @@ class Storage:
         只重置 `settings` 字典——图标排布（layout）与小组件（widgets）
         是用户内容，不属于"配置"，保留。个别"用户已做过选择"类状态
         （如 onboarding 已看过）会跟着回默认，属可接受代价。
+
+        v15d：`dock_items` / `weather_city` 这类**内容是用户数据、不是
+        旋钮**的键必须保留。旧实现整字典替换，用户点一次「恢复默认配置」
+        Dock 上的应用和天气城市一起被清空（Dock 还会因为 `dock_seeded`
+        回 False 而被桌面应用重新塞满）——和"恢复外观默认值"的预期完全
+        不符。保留清单只放内容与一次性迁移标记，真正的配置值照常重置。
         """
+        keep = {}
+        for key in ("dock_items", "dock_seeded", "weather_city",
+                    "desktop_clone_seeded", "desktop_clone_v2",
+                    "onboarding_version", "widgets_removed", "extra_pages"):
+            if key in self._data["settings"]:
+                keep[key] = deepcopy(self._data["settings"][key])
         self._data["settings"] = deepcopy(DEFAULT_SETTINGS)
+        self._data["settings"].update(keep)
         self.save()
 
     def reset_grid_origin(self):
@@ -881,6 +902,43 @@ class Storage:
 
     def remove_entry(self, entry_id):
         self._data["layout"] = [e for e in self._data["layout"] if e.get("id") != entry_id]
+
+    def sync_free_pages(self, ids=None) -> int:
+        """网格位移后把无界页号（`fpage`）对齐到网格行（v15d）。
+
+        双坐标契约（v7 B2）里 `col/row` 与 `fx/fy+fpage` 是两套互不干扰
+        的账。但**用户在网格模式里把条目搬到别的页**，是无界页号失效的
+        显式信号：下次切无界还按旧 `fpage` 摆，图标会当场跳回旧页
+        （实测：网格第 1 页的图标切到无界后跑到第 0 页，用户看到的是
+        "切个模式图标自己跑了"）。
+
+        只同步**这次真的被网格操作移动过**的条目（`ids`），不做全局
+        对齐——否则页点翻页触发的一次 `save()` 就会把用户在无界里摆好
+        的跨页位置冲掉（那正是 v7 B2 要修的 bug）。`ids=None` 只给
+        tidy/pack 这种"全体重排"用。
+
+        返回对齐条数。无界模式直接跳过（此时 fpage 才是权威）。
+        """
+        from . import grid_flow
+        if grid_flow.free_mode(self):
+            return 0
+        rpp = max(1, grid_flow.rows_per_page())
+        n = 0
+        for e in list(self._data["layout"]) + list(self._data.get("widgets") or []):
+            if ids is not None and e.get("id") not in ids:
+                continue
+            raw = e.get("fpage")
+            if raw is None or isinstance(raw, bool):
+                continue
+            try:
+                old = int(raw)
+            except (TypeError, ValueError):
+                continue
+            page = grid_flow.page_of(int(e.get("row", 0) or 0), rpp)
+            if old != page:
+                e["fpage"] = page
+                n += 1
+        return n
 
     def compact_layout(self):
         """最小修正：只修越界与重叠，**不重排顺序**。
@@ -905,6 +963,7 @@ class Storage:
         # 图标会落到时钟/便签的格子上（用户："整理布局会让组件和图标重叠"）
         widget_used = set(grid_flow.widget_cells(self))
         widget_used |= self._side_blocked()   # dock_side_grid：Dock 占格同样禁放
+        moved = set()
         for e in sorted(self._data["layout"],
                         key=lambda x: (x.get("row", 0), x.get("col", 0))):
             col = max(0, min(cols - 1, int(e.get("col", 0))))
@@ -916,12 +975,18 @@ class Storage:
                 col, row = self._big_block_place(grid_flow, col, row, cols,
                                                  used | widget_used)
                 used.update(grid_flow.big_block_cells((col, row)))
+                if (e.get("col"), e.get("row")) != (col, row):
+                    moved.add(e.get("id"))
                 e["col"], e["row"] = col, row
                 continue
             if (col, row) in used or (col, row) in widget_used:
                 col, row = self._first_free_cell(extra_used=used | widget_used)
             used.add((col, row))
+            if (e.get("col"), e.get("row")) != (col, row):
+                moved.add(e.get("id"))
             e["col"], e["row"] = col, row
+        if moved:
+            self.sync_free_pages(moved)
 
     def _big_block_place(self, grid_flow, col, row, cols, blocked):
         """为 2×2 瓷砖找落点：先夹进所在页，再按阅读序找第一块整块放得下
@@ -982,6 +1047,9 @@ class Storage:
                     col += 1
                     if col >= cols:
                         col, row = 0, row + 1
+                # 整理是显式重排：这一页的网格坐标成为权威，无界页号
+                # 跟着对齐（否则整理完切无界，图标按旧页号散回去）。
+                self.sync_free_pages({e.get("id") for e in group})
             return
         entries = sorted(self._data["layout"],
                          key=lambda e: (e.get("row", 0), e.get("col", 0)))
@@ -998,6 +1066,7 @@ class Storage:
             col += 1
             if col >= cols:
                 col, row = 0, row + 1
+        self.sync_free_pages({e.get("id") for e in entries})
 
     def free_icon_box(self):
         """无界模式图标 widget 尺寸（逻辑 px）——**与网格模式同源**。
@@ -1267,6 +1336,7 @@ class Storage:
             col += 1
             if col >= cols:
                 col, row = 0, row + 1
+        self.sync_free_pages({e.get("id") for e in entries})
         return len(entries)
 
     def prune_dead_members(self, live_ids):

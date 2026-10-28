@@ -161,6 +161,17 @@ class FloatingWidget(QWidget):
             return self.rect()
         return self.rect().adjusted(p, p, -p, -p)
 
+    def _card_origin(self):
+        """窗口左上角 -> **卡片**左上角（编辑态窗口比卡片大一圈 pad）。
+
+        v15d：格位反算一律用它。旧代码拿 `self.x()/y()`（窗口左上角）喂
+        `pos_cell`，编辑态窗口外扩了 pad，反算出来的格永远偏左上——
+        改一次尺寸 / 松手吸附一次，组件就永久往左上挪一格并落盘
+        （实测 (4,3) → (3,2)）。
+        """
+        r = self.card_rect()
+        return self.x() + r.x(), self.y() + r.y()
+
     def _sync_chrome_layout(self):
         """编辑态把布局内边距叠加 pad（子控件型组件的内容跟着卡片缩进）。
 
@@ -197,7 +208,7 @@ class FloatingWidget(QWidget):
             return
         self.entry["w"], self.entry["h"] = widget_geom.card_size(
             self.storage, (cs, rs))
-        col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
+        col, row = grid_flow.pos_cell(self.storage, *self._card_origin())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
         col, row = grid_flow.resolve_widget_cell(
             self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))
@@ -360,6 +371,10 @@ class FloatingWidget(QWidget):
         # 改尺寸后切回网格、将来新增的缩放入口）都会让 entry 的跨度停在
         # 旧值——组件看着 4×1，拖动预览却按 2×1 挤图标。
         self._sync_span_from_geometry()
+        # v15d：网格落定后无界页号跟着行对齐（与图标同一条规则）。组件在
+        # 网格里被拖到第 2 页、切无界却按旧 fpage 回到第 0 页，用户看到
+        # 的是"组件自己跑回上一页"。
+        self.storage.sync_free_pages({self.entry.get("id")})
         self.storage.save()
 
     def _span_from_geometry(self):
@@ -781,7 +796,7 @@ class FloatingWidget(QWidget):
             self._save_geom_free()
             return
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
-        col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
+        col, row = grid_flow.pos_cell(self.storage, *self._card_origin())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
         # 2026-10-19 反馈：组件之间不许堆叠——目标压到别的组件身上时改落
         # 最近的可行格（安卓语义）。放在 clamp 之后：先保证不出页，再消冲突。
@@ -873,7 +888,7 @@ class FloatingWidget(QWidget):
         if grid_flow.free_mode(self.storage):
             return
         cs, rs = grid_flow.widget_span(self.storage, self.entry)
-        col, row = grid_flow.pos_cell(self.storage, self.x(), self.y())
+        col, row = grid_flow.pos_cell(self.storage, *self._card_origin())
         col, row = grid_flow.clamp_widget_cell(self.storage, col, row, cs, rs)
         col, row = grid_flow.resolve_widget_cell(
             self.storage, col, row, cs, rs, exclude_id=self.entry.get("id"))

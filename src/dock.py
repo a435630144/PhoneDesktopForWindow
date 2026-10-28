@@ -818,6 +818,11 @@ class DockWindow(QWidget):
             return False
         if any(i.get("target") == norm[0]["target"] for i in self._items):
             return False
+        # v15d：满员时插入不能"挤掉末尾那条"。旧实现先插进 items 再交给
+        # set_items 截断到 24——用户往中间拖一个，最后一项被静默删除，
+        # 而用户以为只是"加了一个"。
+        if len(self._items) >= DOCK_MAX_ITEMS:
+            return False
         items = list(self._items)
         if index is None:
             items.extend(norm)

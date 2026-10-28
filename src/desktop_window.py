@@ -1546,6 +1546,13 @@ class DesktopWindow(QWidget):
         self._flip_skip = skip_id
         self._flip_bases = None     # 页变了，落定格点缓存作废
 
+        # 页变了：旧页的选择必须一起走。隐藏条目仍在 `_selected` 里，
+        # 用户在新页按 Delete / 批量移动会作用到屏幕上看不见的图标
+        # （实测：第 1 页选中 → 点页点翻到第 2 页 → Delete，第 1 页的
+        # 条目被删）。拖拽中的边缘翻页不清，成员的选择态要跟着手指。
+        if not (self._drag_active or self._drag_multi):
+            self._prune_selection_to_page(page)
+
         playing = animate and not effects.reduced_motion()
         if playing:
             # v10 B3：**一个标量驱动整页平移**。帧位置 = 落定格点 + `flip_px`，
@@ -2224,10 +2231,18 @@ class DesktopWindow(QWidget):
             icon.set_selected(eid in self._selected)
 
     def _select_in_rect(self, rect):
-        """橡皮筋框选：与矩形相交即选中（Ctrl 追加）。"""
+        """橡皮筋框选：与矩形相交即选中（Ctrl 追加）。
+
+        只收**当前页可见**的图标。其它页的图标只是 hidden，几何仍停在
+        自己的格点上（甚至和当前页重叠），旧实现只比矩形会把它们一并
+        选进 `_selected`——用户在全窗框选后按 Delete，删掉的是几个
+        屏幕上看不见的条目。与 `_select_all` 的"只选当前页"对齐。
+        """
         if not (QApplication.keyboardModifiers() & Qt.ControlModifier):
             self._selected.clear()
         for eid, icon in self.icons.items():
+            if icon.isHidden():
+                continue
             if rect.intersects(QRect(icon.pos(), icon.size())):
                 self._selected.add(eid)
         self._refresh_selection()
@@ -2235,6 +2250,26 @@ class DesktopWindow(QWidget):
     def _clear_selection(self):
         if self._selected:
             self._selected.clear()
+            self._refresh_selection()
+
+    def _prune_selection_to_page(self, page):
+        """丢掉不属于 `page` 的选择（选择只对看得见的页有意义）。
+
+        `_selected` 是 id 集合，不随翻页清理；批量菜单与 Delete 都直接
+        读它，留着隐藏页的 id 就等于"闭着眼删东西"。批量移动到分页
+        之后调用时，成员已经在新页，会被保留（选择跟着走）。
+        """
+        if not self._selected:
+            return
+        keep = set()
+        for eid in self._selected:
+            entry = self.storage.find_entry(eid)
+            if entry is None:
+                continue
+            if grid_flow.entry_page(self.storage, entry) == int(page):
+                keep.add(eid)
+        if keep != self._selected:
+            self._selected = keep
             self._refresh_selection()
 
     # ---------- 手机模式：多选态（v9 V4） ----------
@@ -2331,9 +2366,14 @@ class DesktopWindow(QWidget):
                 self._absorb(target, other)
                 continue
             if other.get("type") == "folder":
+                # 先取自己的 app 再清空：旧实现 `target["app"] = {}` 写在
+                # 构造 apps 之前，`[m for m in [target.get("app")] if m]`
+                # 永远是空表——"应用 + 文件夹"合并后，应用本身从文件夹里
+                # 消失（磁盘文件还在，但布局里没了，用户看到的就是图标不见了）。
+                own = [m for m in [target.get("app")] if m]
                 target["type"] = "folder"
                 target["app"] = {}
-                target["apps"] = [m for m in [target.get("app")] if m]
+                target["apps"] = own
                 self._absorb(target, other)
             else:
                 members = [m for m in (target.get("app"), other.get("app")) if m]
@@ -2370,25 +2410,29 @@ class DesktopWindow(QWidget):
 
         rpp = grid_flow.rows_per_page()
         cols = max(1, int(self.storage.columns))
-        moving = {e.get("id") for e in entries}
-        blocked = set()
-        for e in self.storage.layout:
-            if e.get("id") in moving:
-                continue
-            blocked.add((int(e.get("col", 0) or 0), int(e.get("row", 0) or 0)))
-        for col, row in grid_flow.widget_cells(self.storage):
-            blocked.add((col, row))
-        lo = page * rpp
-        free = [(c, r) for r in range(lo, lo + rpp) for c in range(cols)
-                if (c, r) not in blocked]
+        # v15d：分配走 grid_flow.assign_page_cells——它按**真实 footprint**
+        # 占格（2×2 大文件夹要一整块、别人瓷砖的派生格不可用）。旧实现
+        # 每个条目只拿 1 格，大文件夹移过去会压住目标页的图标。
         # P2-4（2026-10-26）：目标页空间不足时不再静默少移——托盘提示
-        if len(free) < len(entries):
+        extra = self._widget_cells()
+        # 选中项自己的派生格不算"不可用"：把大文件夹"移动到当前页"时，
+        # 它自己正占着那 4 格——不排除就永远找不到落点（白白报空间不足）。
+        for e in entries:
+            if grid_flow.is_big_folder(self.storage, e):
+                extra -= set(grid_flow.big_extra_cells(e, cols) or [])
+        moves, leftovers = grid_flow.assign_page_cells(
+            self.storage.layout, [e.get("id") for e in entries], page,
+            cols, rpp, extra_occupied=extra)
+        if leftovers:
             from .tray import notify_via_tray
             notify_via_tray(
-                "空间不足", "第 %d 页只剩 %d 个空位，%d 个图标未移动"
-                % (page + 1, len(free), len(entries) - len(free)))
-        for e, (c, r) in zip(entries, free):
-            e["col"], e["row"] = c, r
+                "空间不足", "第 %d 页放不下剩余的 %d 个图标，已保留在原页"
+                % (page + 1, len(leftovers)))
+        for eid, (c, r) in moves.items():
+            e = self.storage.find_entry(eid)
+            if e is not None:
+                e["col"], e["row"] = c, r
+        self.storage.sync_free_pages(set(moves))
         self.storage.save()
         self._sync_icons()
         self.goto_page(page)
@@ -2990,17 +3034,40 @@ class DesktopWindow(QWidget):
         情况下都走 `reflow_moves`（只把新旧位置之间的图标滑动一格）——
         别处的空格永远还在，勾了"自动排列图标"跟没勾一样。现在开关
         真正参与算法选择：开 -> `auto_arrange_moves` 从左上角连续密排。
+
+        v15d：**大文件夹是锚点，不参与密排**。两个算法都只认主格，把
+        2×2 当 1 格：密排会把瓷砖挤到邻居身上（实测 auto 模式下拖一个
+        图标到瓷砖主格，瓷砖被排到 (2,0)、另一个图标同时被排进 (3,0)，
+        正好压在瓷砖的派生格里）。这里把其它大文件夹从 entries 里摘掉，
+        再把它们整块 4 格塞进 extra_occupied —— 密排绕开瓷砖，瓷砖原地
+        不动（和小组件同一语义）。拖的本身就是瓷砖时，整块语义交给
+        `_free_moves`（互换 + 让位），密排对 2×2 没有意义。
         """
+        dragged_entry = self.storage.find_entry(dragged)
+        if dragged_entry is not None and grid_flow.is_big_folder(
+                self.storage, dragged_entry):
+            return self._free_moves(dragged, cell)
+        pinned = {e.get("id") for e in self.storage.layout
+                  if e.get("id") != dragged
+                  and grid_flow.is_big_folder(self.storage, e)}
+        extra = set(self._widget_cells())
+        for e in self.storage.layout:
+            if e.get("id") in pinned:
+                extra.update(grid_flow.big_block_cells(
+                    (int(e.get("col", 0) or 0), int(e.get("row", 0) or 0))))
+        entries = self.storage.layout
+        if pinned:
+            entries = [e for e in entries if e.get("id") not in pinned]
         if self._auto_arrange_at(cell[1]):
             return grid_flow.auto_arrange_moves(
-                self.storage.layout, self.storage.columns, dragged, cell,
-                extra_occupied=self._widget_cells(),
+                entries, self.storage.columns, dragged, cell,
+                extra_occupied=extra,
                 rpp=grid_flow.rows_per_page(),
                 auto_pages=page_rules.auto_pages(
                     self.storage, grid_flow.page_count(self.storage)))
         return grid_flow.reflow_moves(
-            self.storage.layout, self.storage.columns, dragged, cell,
-            rows=rows, extra_occupied=self._widget_cells())
+            entries, self.storage.columns, dragged, cell,
+            rows=rows, extra_occupied=extra)
 
     def _push_occupied(self):
         """悬停够久：把占着落点的图标实时挤走（手机 launcher 语义）。
@@ -3081,6 +3148,17 @@ class DesktopWindow(QWidget):
             return {}
         big = grid_flow.is_big_folder(self.storage, src)
         block = set(grid_flow.big_block_cells(cell) if big else [cell])
+        # 2×2 的**整块**都不能落在组件/别的瓷砖派生格上。旧实现只查主格：
+        # 瓷砖拖到组件旁边时主格是空的、右侧那一格却是时钟，松手后瓷砖
+        # 直接盖住组件（用户看不见组件，组件也点不到）。
+        # 自己当前的派生格不算（它们会随着移动空出来，否则"往下挪一行"
+        # 会被自己的旧占格挡住）。
+        crowded = self._widget_cells()
+        if big:
+            own_extra = grid_flow.big_extra_cells(src, int(self.storage.columns)) or []
+            crowded -= set(own_extra)
+        if any(c in crowded for c in block):
+            return {}
         occupant = None
         for e in self.storage.layout:
             if e.get("id") == dragged_id:
@@ -3088,8 +3166,12 @@ class DesktopWindow(QWidget):
             if (int(e.get("col", 0)), int(e.get("row", 0))) == cell:
                 occupant = e
                 break
-        if occupant is None and cell in self._widget_cells():
-            return {}                      # 组件占位格：拒绝
+        if occupant is not None and not big \
+                and grid_flow.is_big_folder(self.storage, occupant):
+            # 普通图标不能把 2×2 换进 1 格：换过去瓷砖的另外三格会压住
+            # 旁边的人（实测：图标落进瓷砖主格 → 瓷砖跳到源格 → 压住邻居）。
+            # 拒绝 = 图标弹回原位，等悬停合并语义接手。
+            return {}
         moves = {dragged_id: cell}
         if occupant is not None:
             moves[occupant["id"]] = old    # 交换到源格
@@ -3187,6 +3269,9 @@ class DesktopWindow(QWidget):
         dragged = self._preview_drag
         moves = self._preview_moves
         self._push_undo(self._layout_snap)
+        # 网格位移落定 = 无界页号（fpage）的有效性失效点：被移动过的
+        # 条目按新行对齐，下次切无界不会跳回旧页（v15d）。
+        self.storage.sync_free_pages(set(moves or ()))
         self.storage.save()
         if dragged and dragged in self.icons:
             entry = self.storage.find_entry(dragged)
@@ -3235,6 +3320,9 @@ class DesktopWindow(QWidget):
             e = by_id.get(eid)
             if e is not None:
                 e["col"], e["row"] = col, row
+        # 撤销也是网格位移：无界页号跟着回退，否则撤销后切模式仍停在
+        # 撤销前的页（同一个 fpage 失效点）。
+        self.storage.sync_free_pages({eid for eid, _c, _r in snap})
         self.storage.save()
         self._clear_preview()
         for eid, icon in self.icons.items():
@@ -3354,6 +3442,12 @@ class DesktopWindow(QWidget):
         文件系统事件是被动发生的，用户摆放的位置必须原样保留。
         """
         self._dissolve_degenerate_folders()   # v14j：外部移走文件后 folder 解除
+        # 被解散的可能正是开着的弹窗：留着一个 entry 已不在 storage 的
+        # 弹窗，用户再点 ＋ 就会把桌面图标塞进"幽灵文件夹"（v15d）。
+        if self._popup is not None:
+            host = self.storage.find_entry((self._popup.entry or {}).get("id"))
+            if host is None or host.get("type") != "folder":
+                self._close_popup()
         self._sync_structure()
         self._cull_page_icons()
         self.storage.save()
@@ -3802,13 +3896,72 @@ class DesktopWindow(QWidget):
 
         大文件夹占 2×2——布局要重排（放不下会换行），rebuild 是最稳的
         路径（_refresh_grid 走 refresh_grid → 重建图标 + 重铺）。
+
+        v15d：放大不能只写个标记。旧实现直接 rebuild，于是
+          * 贴最后一列的文件夹 → 2×2 右半边在窗口外（半个瓷砖看不见）；
+          * 旁边有图标 → 瓷砖直接盖住它们（既不显示也点不到）。
+        现在先 `_enlarge_big_folder()`：夹进网格与页、挤走被压住的图标；
+        四格里有组件占位则明确拒绝并提示（不能把组件盖掉）。
         """
         entry = self.storage.find_entry(entry_id)
         if not entry or entry.get("type") != "folder":
             return
+        if big and not self._enlarge_big_folder(entry):
+            return
         entry["big"] = bool(big)
         self.storage.save()
         self.rebuild(stagger=False)
+
+    def _enlarge_big_folder(self, entry) -> bool:
+        """把文件夹放大成 2×2 前的落位：夹紧 + 挤走被压住的图标（v15d）。
+
+        网格模式返回 False = 放不下（四格被组件占住），调用方放弃放大；
+        无界模式不占格，直接放行（2×2 只是视觉尺寸，允许重叠）。
+        """
+        if grid_flow.free_mode(self.storage):
+            return True
+        cols = max(1, int(self.storage.columns))
+        rpp = max(1, int(grid_flow.rows_per_page()))
+        row = int(entry.get("row", 0) or 0)
+        page = grid_flow.page_of(row, rpp)
+        cell = grid_flow.clamp_big_cell(
+            (int(entry.get("col", 0) or 0), row), cols,
+            (page * rpp, page * rpp + rpp - 1))
+        block = set(grid_flow.big_block_cells(cell))
+        widgets = set(grid_flow.widget_cells(self.storage))
+        if block & widgets:
+            from .tray import notify_via_tray
+            notify_via_tray(
+                "放大失败",
+                "2×2 需要四格，当前位置被小组件占住了——先把组件挪开再试")
+            return False
+        stuck = []
+        blocked = set(block) | widgets
+        try:
+            blocked |= self.storage._side_blocked()
+        except (AttributeError, RuntimeError):
+            pass
+        for e in self.storage.layout:
+            if e.get("id") == entry.get("id"):
+                continue
+            ec = (int(e.get("col", 0) or 0), int(e.get("row", 0) or 0))
+            if ec in block:
+                stuck.append((ec, e))
+                continue
+            blocked.add(ec)
+            if grid_flow.is_big_folder(self.storage, e):
+                blocked.update(grid_flow.big_block_cells(ec))
+        entry["col"], entry["row"] = cell
+        moved = {entry.get("id")}
+        if stuck:
+            dests = grid_flow.displace_cells(
+                [c for c, _e in stuck], blocked, cols,
+                (page * rpp, page * rpp + rpp - 1))
+            for ec, e in stuck:
+                e["col"], e["row"] = dests[ec]
+                moved.add(e.get("id"))
+        self.storage.sync_free_pages(moved)
+        return True
 
     def _on_folder_frame(self, entry_id, cols, rows):
         """右键「文件夹大小」（反馈 14）：写 entry["frame"] 并立即重排弹窗。
@@ -3829,7 +3982,18 @@ class DesktopWindow(QWidget):
     def _on_popup_member_added(self, entry_id):
         """＋ 添加面板 / 拖入：桌面条目并入文件夹。成员 apps 的追加由
         popup._add_member_by_id 完成，这里只把桌面上的源条目移出布局
-        （M4 增量：不 rebuild）。"""
+        （M4 增量：不 rebuild）。
+
+        v15d：先确认弹窗的文件夹还活着（外部同步可能已经把它解散）——
+        否则"把桌面图标塞进一个不存在的文件夹"再从桌面删掉，图标直接
+        消失。弹窗自身也有一道同样的守卫，这里是信号层的第二道。
+        """
+        popup = self._popup
+        if popup is not None:
+            host = self.storage.find_entry((popup.entry or {}).get("id"))
+            if host is None or host.get("type") != "folder":
+                self._close_popup()
+                return
         e = self.storage.find_entry(entry_id)
         if e is None:
             return
@@ -3866,6 +4030,10 @@ class DesktopWindow(QWidget):
                 col = row = None
         app = folder["apps"].pop(idx)
         known = {e.get("id") for e in self.storage.layout}
+        if col is None or row is None:
+            slot = grid_flow.first_free_cell_in_page(self.storage, self._page)
+            if slot is not None:
+                col, row = slot
         entry = self.storage.add_app(app, col, row)
         # 防御：若同一 id 已在桌面（历史数据里"桌面+文件夹"重复过），
         # add_app 会直接返回已有条目而不新增——不处理的话成员已从文件夹
@@ -3947,7 +4115,14 @@ class DesktopWindow(QWidget):
         if not (0 <= idx < len(folder.get("apps", []))):
             return
         app = folder["apps"].pop(idx)
-        self.storage.add_app(app)          # 第一个空格弹回桌面
+        # v15d：优先落回**用户当前这一页**的第一空格。`add_app(app)` 默认
+        # 全局 first_free_cell（从第 0 页扫），在第 2 页打开文件夹移出成员，
+        # 成员会静静出现在第 1 页，用户以为"移出失败"。
+        slot = grid_flow.first_free_cell_in_page(self.storage, self._page)
+        if slot is not None:
+            self.storage.add_app(app, *slot)
+        else:
+            self.storage.add_app(app)
         remaining = len(folder.get("apps") or [])
         if remaining == 1:
             self._dissolve_folder(folder)  # 反馈 10：只剩一个 → 解除
@@ -4353,11 +4528,15 @@ class DesktopWindow(QWidget):
             except Exception:
                 failed += 1
         # P2-4（2026-10-26）：失败不再静默——托盘提示（成功/部分/全失败）
+        # 2026-10-29：部分成功也要 rescan。旧实现只在"全成功"分支刷新，
+        # 部分失败时新文件已经复制进桌面目录、界面上却一个都不出现
+        # （auto_sync_desktop 关闭时尤其明显，要等用户手动刷新）。
         from .tray import notify_via_tray
+        if added:
+            self.rescan_desktop()
         if added and failed:
             notify_via_tray("部分粘贴成功", "%d 个成功，%d 个失败" % (added, failed))
         elif added:
-            self.rescan_desktop()
             notify_via_tray("已粘贴到桌面", "%d 个项目" % added)
         elif failed:
             notify_via_tray("粘贴失败", "%d 个项目无法复制到桌面" % failed)

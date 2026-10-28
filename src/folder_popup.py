@@ -46,8 +46,8 @@ from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
                             QParallelAnimationGroup, QPoint,
                             QPointF, QPropertyAnimation, QRect, QRectF,
                             QTimer, Qt, Signal, Property)
-from PySide6.QtGui import (QColor, QCursor, QFont, QGuiApplication, QPainter,
-                           QPalette, QPen, QPixmap)
+from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics,
+                           QGuiApplication, QPainter, QPalette, QPen, QPixmap)
 from PySide6.QtWidgets import (QApplication, QLineEdit, QMenu,
                                QWidget)
 
@@ -679,8 +679,12 @@ class FolderPopup(QWidget):
 
     def _title_rect(self):
         _s, m, pad, title_h, _b = self._metrics()
-        # 标题左边界留出按钮组：标题不能画到右上角三个按钮下面
-        return QRect(pad, 6, max(1, self.width() - pad * 2 - 86), title_h - 8)
+        # 标题左边界留出按钮组：标题不能画到右上角三个按钮下面。
+        # v15d：按**实际**按钮组左边界算，不写死 86px。按钮尺寸随
+        # `ui_scale` 走（125% 时三个按钮 + 间距要 110px），写死的常数
+        # 在 125%/150% 下会让标题压到按钮上。
+        right = self._header_rects()["style"].left() - max(4, int(round(6 * m)))
+        return QRect(pad, 6, max(1, right - pad), title_h - 8)
 
     # ---------- 右上角按钮组（反馈 8：○ = 样式，＋ = 快速添加） ----------
     def _header_btn_size(self):
@@ -892,7 +896,10 @@ class FolderPopup(QWidget):
         from . import folder_layout
         menu = QMenu(self)
         menu.setStyleSheet(theme.MENU_QSS)
-        cur = folder_layout.frame_pair(self.entry.get("frame"))
+        # v15d：勾选态要按**实际生效**的上限：全局默认尺寸可能被用户
+        # 改过（设置里的 folder_frame_default），只有 entry["frame"] 缺失
+        # 时旧代码回退成 3×3，勾会勾在错的项上。
+        cur = self.storage.folder_frame(self.entry)
         for c, r in folder_layout.FRAME_PRESETS:
             act = menu.addAction(folder_layout.label(c, r))
             act.setCheckable(True)
@@ -973,7 +980,10 @@ class FolderPopup(QWidget):
         self.entry = found
         # v6 §6.2：_build 现在会按网格区中心重新定位——必须先 build
         # （移动 + 重建成员）再抓背板，否则背板抓在旧位置（窗口已移走）。
-        self._build(None, keep_backdrop=True)
+        # v15d：刷新必须**留在原地**（keep_pos）——用户拖出/移出一个成员，
+        # 弹窗跳到屏幕中央，视觉上像"重新打开了一次"；色板开合走的就是
+        # keep_pos，这里漏传了。
+        self._build(None, keep_backdrop=True, keep_pos=True)
         self._regrab_backdrop()
 
     def apply_label_style(self, style):
@@ -1312,6 +1322,15 @@ class FolderPopup(QWidget):
         e = self.storage.find_entry(entry_id)
         if e is None or e.get("type") != "app":
             return False
+        # v15d：弹窗对应的文件夹必须**还在 storage 里**。外部同步（桌面文件
+        # 被移走）可能已经把只剩 1 个成员的文件夹解散了，而弹窗还开着；
+        # 此时再点 ＋ 会把桌面上的成员塞进一个已不存在的文件夹 dict，
+        # memberAdded 又让桌面把那条图标删掉——图标凭空消失。
+        host = self.storage.find_entry(self.entry.get("id"))
+        if host is None or host.get("type") != "folder":
+            self.close()
+            return False
+        self.entry = host
         app = e.get("app") or {}
         if not app:
             return False
@@ -1480,8 +1499,12 @@ class FolderPopup(QWidget):
             f = theme.ui_font(15, bold=True)
             f.setLetterSpacing(QFont.AbsoluteSpacing, 0.3)
             p.setFont(f)
-            p.drawText(tr, Qt.AlignHCenter | Qt.AlignVCenter,
-                       self.entry.get("name") or "文件夹")
+            # v15d：长名按标题宽度省略，不再让 drawText 在按钮边缘
+            # 硬裁成一个半截字（用户反馈"标题断在按钮下面"）。
+            fm = QFontMetrics(f)
+            label = fm.elidedText(self.entry.get("name") or "文件夹",
+                                  Qt.ElideRight, max(1, tr.width()))
+            p.drawText(tr, Qt.AlignHCenter | Qt.AlignVCenter, label)
         # 右上角按钮组（反馈 8）：× 关闭 / ＋ 快速添加 / ○ 文件夹样式
         hdr = self._header_rects()
         for key in ("close", "add", "style"):

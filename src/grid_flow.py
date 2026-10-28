@@ -625,6 +625,87 @@ def _pick_vacated(src: Cell, vacated) -> Optional[Cell]:
                               v[1], v[0]))
 
 
+def assign_page_cells(entries: Sequence[dict], ids, page: int, cols: int,
+                      rpp: int, extra_occupied=()) -> Tuple[dict, list]:
+    """把一批条目搬到第 `page` 页：按请求顺序分配空位（v15d）。
+
+    多选右键「移动到分页」的唯一分配入口。旧实现把每个条目当 1 格
+    （`free = [空单元格]` 后 `zip(entries, free)`），两处漏算：
+
+      * 目标是 2×2 大文件夹 —— 只拿 1 格，瓷砖的另外 3 格压住目标页
+        已有的图标（实测：移过去后瓷砖盖住一个图标，用户看不见也点不到）；
+      * 目标页上其余条目的**派生格**没进 blocked —— 普通图标会被塞进
+        别的瓷砖底下。
+
+    规则（纯函数，零 Qt）：
+      1. blocked = 组件占位 + 本页上不参与移动的条目的真实 footprint；
+      2. 按 `ids` 顺序逐个分配：普通条目取阅读序第一个空格，大文件夹取
+         阅读序第一个四格全空的整块（贴边/页底放不下就自然跳过）；
+      3. 分配过的格子立即占用，条目之间绝不重叠；
+      4. 页内放不下 -> 该条目进 leftovers（调用方提示，不静默少移）。
+
+    返回 `({id: (col, row)}, [未安排的 id])`；`ids` 里不在 entries 的忽略。
+    """
+    cols = max(1, int(cols))
+    rpp = max(1, int(rpp))
+    lo = max(0, int(page)) * rpp
+    hi = lo + rpp - 1
+    by_id = {e.get("id"): e for e in entries}
+    want = [i for i in (ids or ()) if i in by_id]
+    moving = set(want)
+    blocked = set(extra_occupied or ())
+    for e in entries:
+        if e.get("id") in moving:
+            continue
+        cell = _cell_of(e)
+        if page_of(cell[1], rpp) != int(page):
+            continue
+        if is_big_folder(None, e):
+            if cell[0] + 1 < cols:
+                blocked.update(big_block_cells(cell))
+            else:
+                blocked.add(cell)
+        else:
+            blocked.add(cell)
+    free = {(c, r) for r in range(lo, hi + 1) for c in range(cols)
+            if (c, r) not in blocked}
+    moves = {}
+    leftovers = []
+    for eid in want:
+        e = by_id[eid]
+        if is_big_folder(None, e):
+            spot = None
+            for r in range(lo, hi):          # 页内最后一行放不下 2 行
+                for c in range(cols - 1):    # 最后一列放不下 2 列
+                    cells = big_block_cells((c, r))
+                    if all(x in free for x in cells):
+                        spot = (c, r)
+                        break
+                if spot is not None:
+                    break
+            if spot is None:
+                leftovers.append(eid)
+                continue
+            for x in big_block_cells(spot):
+                free.discard(x)
+            moves[eid] = spot
+            continue
+        spot = None
+        for r in range(lo, hi + 1):
+            for c in range(cols):
+                if (c, r) in free:
+                    spot = (c, r)
+                    break
+            if spot is not None:
+                break
+        if spot is None:
+            leftovers.append(eid)
+            continue
+        free.discard(spot)
+        moves[eid] = spot
+    return moves, leftovers
+
+
 def displace_cells(src_cells, blocked, cols: int, page_rows) -> dict:
     """给一批"被压住"的图标统一分配新格（**互不重复**）。
 

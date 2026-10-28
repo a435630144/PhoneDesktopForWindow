@@ -137,6 +137,24 @@ def open_settings(window, storage, layer, page="general"):
     return dlg
 
 
+
+def _num_setting(storage, key, default):
+    """读数值型设置：**0 是合法值**，只有 None / 空串 / 坏值才回默认。
+
+    v15d：滑条初值普遍写成 `int(get_setting(key) or default)`——用户把
+    「阴影透明度」「悬停填充」「预览边框」调到 0（= 关闭），下次打开设置
+    面板显示的是 75/8/2，再动一下别的控件就把 0 覆盖回默认值，等于
+    "关不掉"。数值设置一律走这里。
+    """
+    v = storage.get_setting(key)
+    if v is None or v == "":
+        return int(default)
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return int(default)
+
+
 class SettingsDialog(QDialog):
     # v9 V2：「组件库」分页（原独立窗口融合进来，BUG1 从结构上消失）
     # v14h 重梳理（用户反馈：有的页不用单独分 sheet、有的内容放错页）：
@@ -1484,7 +1502,7 @@ class SettingsDialog(QDialog):
         self.sld_label_shadow.setRange(0, 100)
         self.sld_label_shadow.setFixedWidth(150)
         self.sld_label_shadow.setValue(
-            int(self.storage.get_setting("label_shadow_alpha") or 75))
+            _num_setting(self.storage, "label_shadow_alpha", 75))
         self.lbl_label_shadow = QLabel("%d%%" % self.sld_label_shadow.value())
         self.lbl_label_shadow.setObjectName("rowHint")
         self.lbl_label_shadow.setFixedWidth(40)
@@ -1523,7 +1541,7 @@ class SettingsDialog(QDialog):
             _ls.LABEL_OUTLINE_MIN, _ls.LABEL_OUTLINE_MAX)
         self.sp_label_outline_w.setFixedWidth(96)
         self.sp_label_outline_w.setValue(
-            int(self.storage.get_setting("label_outline_width") or 1))
+            _num_setting(self.storage, "label_outline_width", 1))
         self.sp_label_outline_w.valueChanged.connect(
             self._apply_label_outline_w)
         self._row(c, card, i18n.T("settings.icons.outline_w.title"),
@@ -1582,7 +1600,7 @@ class SettingsDialog(QDialog):
             _ls.PREVIEW_FILL_MIN, _ls.PREVIEW_FILL_MAX)
         self.sld_cell_preview_fill.setFixedWidth(150)
         self.sld_cell_preview_fill.setValue(
-            int(self.storage.get_setting("cell_preview_fill") or 8))
+            _num_setting(self.storage, "cell_preview_fill", 8))
         self.lbl_cell_preview_fill = QLabel(
             "%d%%" % self.sld_cell_preview_fill.value())
         self.lbl_cell_preview_fill.setObjectName("rowHint")
@@ -1604,7 +1622,7 @@ class SettingsDialog(QDialog):
         self.sp_cell_preview_width.setSuffix("px")
         self.sp_cell_preview_width.setFixedWidth(96)
         self.sp_cell_preview_width.setValue(
-            int(self.storage.get_setting("cell_preview_width") or 2))
+            _num_setting(self.storage, "cell_preview_width", 2))
         self.sp_cell_preview_width.valueChanged.connect(
             self._apply_cell_preview_width)
         self._row(c2, card2, i18n.T("settings.icons.preview.width.title"),
@@ -1617,7 +1635,7 @@ class SettingsDialog(QDialog):
         self.sp_cell_preview_radius.setSuffix("px")
         self.sp_cell_preview_radius.setFixedWidth(96)
         self.sp_cell_preview_radius.setValue(
-            int(self.storage.get_setting("cell_preview_radius") or 8))
+            _num_setting(self.storage, "cell_preview_radius", 8))
         self.sp_cell_preview_radius.valueChanged.connect(
             self._apply_cell_preview_radius)
         self._row(c2, card2, i18n.T("settings.icons.preview.radius.title"),
@@ -1662,8 +1680,8 @@ class SettingsDialog(QDialog):
         self.sld_hover_fill.setRange(0, 40)
         self.sld_hover_fill.setFixedWidth(150)
         self.sld_hover_fill.setStyleSheet(theme.SLIDER_QSS)
-        self.sld_hover_fill.setValue(int(
-            self.storage.get_setting("icon_hover_fill") or 8))
+        self.sld_hover_fill.setValue(
+            _num_setting(self.storage, "icon_hover_fill", 8))
         self.lbl_hover_fill = QLabel("%d%%" % self.sld_hover_fill.value())
         self.lbl_hover_fill.setObjectName("rowHint")
         self.lbl_hover_fill.setFixedWidth(40)
@@ -2342,8 +2360,8 @@ class SettingsDialog(QDialog):
         self.sld_folder_open.setRange(100, 1000)
         self.sld_folder_open.setFixedWidth(150)
         self.sld_folder_open.setStyleSheet(theme.SLIDER_QSS)
-        self.sld_folder_open.setValue(int(
-            self.storage.get_setting("folder_hover_open_ms") or 260))
+        self.sld_folder_open.setValue(
+            _num_setting(self.storage, "folder_hover_open_ms", 260))
         self.lbl_folder_open = QLabel("%dms" % self.sld_folder_open.value())
         self.lbl_folder_open.setObjectName("rowHint")
         self.lbl_folder_open.setFixedWidth(52)
@@ -2362,8 +2380,8 @@ class SettingsDialog(QDialog):
         self.sld_folder_close.setRange(200, 2000)
         self.sld_folder_close.setFixedWidth(150)
         self.sld_folder_close.setStyleSheet(theme.SLIDER_QSS)
-        self.sld_folder_close.setValue(int(
-            self.storage.get_setting("folder_auto_close_ms") or 450))
+        self.sld_folder_close.setValue(
+            _num_setting(self.storage, "folder_auto_close_ms", 450))
         self.lbl_folder_close = QLabel("%dms" % self.sld_folder_close.value())
         self.lbl_folder_close.setObjectName("rowHint")
         self.lbl_folder_close.setFixedWidth(52)
@@ -2786,6 +2804,14 @@ class SettingsDialog(QDialog):
             self.storage.reset_settings()
         except Exception:        # noqa: BLE001 —— 重置失败就别动运行态
             return
+        # v15d：自启是**系统注册表状态**，默认值 False 不会自己撤销它。
+        # 旧实现只重置 settings 键，注册表里的启动项还在，重启又开机自启
+        # ——用户看到"恢复默认了还自启"。
+        try:
+            if autostart.is_enabled():
+                autostart.set_enabled(False)
+        except Exception:        # noqa: BLE001
+            pass
         self._flush_storage()
         # 推运行态：把散落在各分页的"改完即生效"钩子按依赖顺序打一遍
         # （与 _FakeWin 契约一致：缺了就跳过，不硬依赖）
@@ -2799,7 +2825,17 @@ class SettingsDialog(QDialog):
                 except (RuntimeError, AttributeError):
                     pass
         # 图标档位/网格几何类（icon tier 回默认）+ 全量重建
-        self._refresh_grid()
+        # v15d：恢复默认也换掉了 widgets 表与 show_widgets——走窗口的
+        # 统一重载入口（组件全量重建 + 可见性按新值），否则关掉的组件
+        # 还停在桌面上、新开的组件不出现。
+        reload_fn = getattr(self.window, "reload_from_storage", None)
+        if callable(reload_fn):
+            try:
+                reload_fn()
+            except (RuntimeError, AttributeError):
+                self._refresh_grid()
+        else:
+            self._refresh_grid()
         # 关掉重开：控件重新按默认值构建
         self.accept()
         global _dialog
