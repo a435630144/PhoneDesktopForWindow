@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.4.0（v15c）**。本批是**性能批 + 大文件夹落位修复**：翻页单帧 42→10ms、启动省掉三笔白工（按需导入 −50ms、`set_dock` 不再重建 −55ms、壁纸饱和度磁盘缓存 −60ms）；修掉大文件夹（2×2 瓷砖）**拖到最后一列/页底/别人头上就压格、跨页、出界**，以及多选整块、重新扫描/整理布局同样只把它当 1 格的老问题。**114 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.5.0（v15d）**。本批是**功能深度审核**——四条线（桌面与选择 / 文件夹弹窗 / 小组件 / Dock+设置）逐个复现再修，共 25 类缺陷：合并文件夹吞掉应用本体、跨页移动后切无界跳回第 1 页、框选删除看不见的图标、放大瓷砖半个在屏外、删除内置组件重启又回来、弹窗对应的文件夹解散后点 ＋ 会吞桌面图标、恢复默认清空 Dock 与天气城市、滑条调到 0 却自己变回 75%…… **115 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.4.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-114%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.5.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-115%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -208,6 +208,14 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.5.0（v15d）· 2026-10-29 功能深度审核：25 类缺陷收口 → [发布说明](docs/release_notes/8.5.0.md)
+
+- **桌面与选择**：合并「应用 + 文件夹」不再丢掉应用本体；网格跨页移动后无界页号跟随（`sync_free_pages` 只同步被移动的条目）；框选只收当前页可见图标、翻页剪枝；2×2 瓷砖整块避开组件与邻居；「移动到分页」按真实 footprint 分配
+- **文件夹弹窗**：成员增删不再把弹窗甩到屏幕中央；移出成员落在当前页；125% 缩放下标题不再压按钮、长名省略；宿主被外部解散后弹窗不能再吞桌面图标
+- **小组件**：删除内置组件留墓碑（重启不复活）；编辑态格位反算用卡片原点（不再每次往左上挪一格）；总开关关闭时新添加的组件也隐藏，总显隐按页归属
+- **Dock 与设置**：满 24 项插入不再挤掉末尾项；恢复默认保留 Dock 条目/天气城市、并撤销开机自启；数值设置 0 是合法值（阴影/填充/边框不再"关不掉"）
+- 新增 `tests/test_audit_v15d.py` 42 项判据，全量 115 个测试文件 + smoke 全绿
 
 ### 8.4.0（v15c）· 2026-10-28 性能批 + 大文件夹落位修复 → [发布说明](docs/release_notes/8.4.0.md)
 

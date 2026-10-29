@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.4.0 (v15c)** — performance plus big-folder placement fixes. Flipping a page now costs 10ms instead of 42ms per frame, and startup drops three pieces of wasted work: on-demand imports (−50 ms), `set_dock` no longer rebuilds every icon (−55 ms), and the wallpaper saturation bake is cached on disk (89 ms cold → 6 ms warm, without importing PIL at all). The 2×2 folder tile can no longer be dropped onto the last column, the page bottom or on top of another icon — it used to reserve a single cell, spill across pages and bury icons underneath. **114 test files green**.
+> 🚧 **Under active development**: the latest release is **8.5.0 (v15d)** — a deep functional audit along four lines (desktop and selection / folder popup / widgets / Dock and settings), 25 classes of defects reproduced before being fixed: merging an app into a folder swallowed the app, moving items across grid pages made them jump back to page 1 in free mode, rubber-band selection deleted icons you could not see, enlarged tiles hung half off-screen, deleted built-in widgets came back after restart, dissolving a folder left its popup able to eat desktop icons, resetting settings wiped your Dock items and weather city, and sliders set to 0 silently snapped back to 75%. **115 test files green**.
 
-[![release](https://img.shields.io/badge/release-v8.4.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-114%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.5.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-115%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -207,6 +207,14 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.5.0 (v15d) · 2026-10-29 deep functional audit: 25 classes fixed → [notes](docs/release_notes/8.5.0.md)
+
+- **Desktop and selection**: merging an app with a folder keeps the app itself; free-mode page number follows grid page moves (`sync_free_pages`, only for items actually moved); rubber-band selection skips hidden pages and is pruned on flip; 2×2 tiles reserve their whole block against widgets and neighbours; "move to page" allocates by real footprint
+- **Folder popup**: member add/remove no longer recentres the popup; removed members land on the current page; at 125% the title no longer runs under the buttons and long names are elided; a popup whose folder was dissolved elsewhere can no longer swallow desktop icons
+- **Widgets**: deleted built-in widgets stay deleted (tombstone); cell maths in edit mode uses the card origin (no more one-cell drift to the top-left on every resize/drop); new widgets stay hidden while the global switch is off and per-page visibility is respected
+- **Dock and settings**: inserting into a full Dock no longer silently drops the last item; "reset all" keeps Dock items and weather city, and turns autostart off; numeric settings treat 0 as a real value (shadow/fill/outline can finally be switched off)
+- New `tests/test_audit_v15d.py` with 42 assertions; all 115 test files plus smoke green
 
 ### 8.4.0 (v15c) · 2026-10-28 performance batch + big-folder placement → [notes](docs/release_notes/8.4.0.md)
 
