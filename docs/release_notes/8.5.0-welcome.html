@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>欢迎使用 8.5.0 · 掌镜桌面</title>
+<style>
+/* ============================================================
+   掌镜桌面 8.5.0（v15d）· 新版本欢迎页
+   三屏，每屏 1440×900，独立可截图。
+   视觉语言与 src/theme.py 对齐：
+     ACCENT #4CC2FF · SURFACE rgba(30,30,36) · BORDER 白 10~12%
+     GLASS_RADIUS 20 · 顶部 specular 高光
+   ============================================================ */
+:root{
+  --accent:#4cc2ff;
+  --accent-2:#5e5ce6;
+  --accent-3:#40b0be;
+  --ink:#f3f6fb;
+  --ink-dim:rgba(226,233,244,.72);
+  --ink-faint:rgba(206,215,229,.48);
+  --line:rgba(255,255,255,.12);
+  --line-soft:rgba(255,255,255,.07);
+  --glass:linear-gradient(160deg,rgba(255,255,255,.10),rgba(255,255,255,.035) 40%,rgba(255,255,255,.055));
+  --shadow:0 40px 90px -40px rgba(0,0,0,.9),0 2px 10px -4px rgba(0,0,0,.6);
+  --r-lg:26px; --r-md:18px; --r-sm:12px;
+  --font:"Microsoft YaHei UI","Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#05060a;height:100%}
+body{
+  font-family:var(--font);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;height:100vh;
+  display:grid;place-items:center;
+}
+/* 舞台：固定 1440×900 设计稿，按窗口等比缩放——
+   任何显示器 / 系统缩放 / 浏览器窗口下都完整可见，截图不用对尺寸 */
+.deck{
+  position:relative;width:1440px;height:900px;flex:none;
+  transform:scale(var(--s,1));transform-origin:center center;
+  transition:transform .2s ease;
+}
+.screen{
+  position:absolute;inset:0;width:1440px;height:900px;overflow:hidden;
+  border-radius:26px;isolation:isolate;
+  opacity:0;visibility:hidden;transform:scale(.985);
+  transition:opacity .42s cubic-bezier(.22,1,.36,1),transform .42s cubic-bezier(.22,1,.36,1),visibility .42s;
+  background:
+    radial-gradient(1100px 700px at 12% -10%,rgba(76,194,255,.20),transparent 60%),
+    radial-gradient(900px 620px at 92% 6%,rgba(94,92,230,.26),transparent 62%),
+    radial-gradient(1000px 760px at 62% 112%,rgba(64,176,190,.18),transparent 60%),
+    linear-gradient(160deg,#0a0d15 0%,#080a11 45%,#06070c 100%);
+  box-shadow:0 40px 120px -50px #000, 0 0 0 1px rgba(255,255,255,.06);
+}
+.screen.active{opacity:1;visibility:visible;transform:none}
+/* 截图模式：?snap=1 关掉过场，保证截到的是稳定帧 */
+.snap .screen{transition:none}
+.snap .deck{transition:none}
+/* 噪点：极低透明度，避免大面积渐变出现色带 */
+.screen::after{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:3;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/><feColorMatrix type='saturate' values='0'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='.5'/></svg>");
+  opacity:.045;mix-blend-mode:overlay;
+}
+/* 壁纸感光斑 */
+.blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;z-index:0;pointer-events:none}
+.blob.a{width:560px;height:560px;left:-140px;top:-180px;background:radial-gradient(circle,#4cc2ff,transparent 70%)}
+.blob.b{width:620px;height:620px;right:-180px;top:-120px;background:radial-gradient(circle,#5e5ce6,transparent 70%);opacity:.5}
+.blob.c{width:720px;height:520px;left:38%;bottom:-300px;background:radial-gradient(circle,#40b0be,transparent 70%);opacity:.34}
+
+.glass{
+  background:var(--glass);
+  border:1px solid var(--line);
+  box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.18);
+  backdrop-filter:blur(26px) saturate(150%);
+  -webkit-backdrop-filter:blur(26px) saturate(150%);
+}
+/* 通用：右上角版本标 */
+.brand{
+  position:absolute;top:44px;right:56px;z-index:5;
+  display:flex;align-items:center;gap:10px;
+  font-size:13px;letter-spacing:.02em;color:var(--ink-faint);
+}
+.brand .logo{
+  width:26px;height:26px;border-radius:8px;
+  background:linear-gradient(150deg,#4cc2ff,#5e5ce6);
+  box-shadow:0 6px 18px -6px rgba(76,194,255,.9),inset 0 1px 0 rgba(255,255,255,.5);
+  display:grid;place-items:center;
+}
+.brand .logo svg{width:14px;height:14px}
+.brand b{color:rgba(240,245,252,.9);font-weight:600}
+
+/* 底部页点 */
+.dots{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);display:flex;align-items:center;gap:9px;z-index:20;
+  padding:9px 14px;border-radius:99px;background:rgba(8,10,16,.55);
+  border:1px solid rgba(255,255,255,.09);backdrop-filter:blur(10px)}
+.dots i{width:8px;height:8px;border-radius:99px;background:rgba(255,255,255,.22);transition:.35s;cursor:pointer}
+.dots i:hover{background:rgba(255,255,255,.45)}
+.dots i.on{width:24px;background:linear-gradient(90deg,#4cc2ff,#5e5ce6)}
+
+/* ================= 第 1 屏 ================= */
+.s1{padding:96px 0 0 96px;display:grid;grid-template-columns:600px 1fr;gap:56px}
+.s1 .hero-left{display:flex;flex-direction:column;height:100%;padding-bottom:72px}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:9px;
+  padding:7px 14px 7px 9px;border-radius:99px;align-self:flex-start;
+  background:rgba(255,255,255,.055);border:1px solid var(--line-soft);
+  font-size:12.5px;letter-spacing:.06em;color:rgba(220,231,246,.8);
+}
+.eyebrow .dot{width:6px;height:6px;border-radius:99px;background:#4cc2ff;box-shadow:0 0 10px #4cc2ff}
+h1{
+  margin-top:26px;font-size:74px;line-height:1.08;font-weight:700;letter-spacing:-.035em;
+  background:linear-gradient(180deg,#ffffff 18%,rgba(214,229,247,.82) 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+h1 .accent{
+  background:linear-gradient(96deg,#4cc2ff 6%,#8f7bff 58%,#40b0be 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.lede{margin-top:22px;font-size:17.5px;line-height:1.72;color:var(--ink-dim);max-width:520px}
+.lede b{color:rgba(245,250,255,.96);font-weight:600}
+.stats{display:flex;gap:34px;margin-top:38px}
+.stat .n{font-size:34px;font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums;
+  background:linear-gradient(180deg,#fff,rgba(190,220,250,.66));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat .k{margin-top:5px;font-size:12.5px;color:var(--ink-faint);letter-spacing:.04em}
+.cta{display:flex;align-items:center;gap:14px;margin-top:42px}
+.quick{display:flex;gap:9px;margin-top:26px;flex-wrap:wrap}
+.quick span{display:flex;align-items:center;gap:7px;font-size:12px;letter-spacing:.01em;
+  padding:7px 12px;border-radius:99px;color:rgba(214,228,245,.66);
+  background:rgba(255,255,255,.045);border:1px solid var(--line-soft)}
+.quick i{width:5px;height:5px;border-radius:99px;background:#4cc2ff;box-shadow:0 0 8px #4cc2ff}
+.btn{
+  height:50px;padding:0 26px;border-radius:14px;border:1px solid transparent;
+  font-family:var(--font);font-size:14.5px;font-weight:600;letter-spacing:.01em;
+  display:inline-flex;align-items:center;gap:9px;cursor:pointer;transition:.28s cubic-bezier(.22,1,.36,1);
+}
+.btn.primary{
+  color:#04121c;
+  background:linear-gradient(180deg,#8ad8ff,#4cc2ff);
+  box-shadow:0 14px 34px -12px rgba(76,194,255,.85),inset 0 1px 0 rgba(255,255,255,.7);
+}
+.btn.primary:hover{transform:translateY(-1px);box-shadow:0 18px 40px -12px rgba(76,194,255,.95),inset 0 1px 0 rgba(255,255,255,.75)}
+.btn.ghost{color:var(--ink-dim);background:rgba(255,255,255,.045);border-color:var(--line)}
+.btn.ghost:hover{color:var(--ink);background:rgba(255,255,255,.08)}
+.foot{margin-top:auto;padding-bottom:18px;font-size:12px;color:rgba(200,211,226,.38);letter-spacing:.03em}
+
+/* —— 第 1 屏右侧：桌面预览 —— */
+.preview{
+  position:relative;width:608px;height:666px;margin-top:-8px;border-radius:34px;
+  padding:22px;display:flex;flex-direction:column;gap:18px;
+  background:linear-gradient(155deg,rgba(255,255,255,.085),rgba(255,255,255,.02) 45%,rgba(255,255,255,.05));
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 60px 120px -50px #000,inset 0 1px 0 rgba(255,255,255,.28);
+  backdrop-filter:blur(30px) saturate(160%);
+}
+.preview::before{
+  content:"";position:absolute;inset:0;border-radius:34px;pointer-events:none;
+  background:linear-gradient(200deg,rgba(255,255,255,.16),transparent 34%);
+  mix-blend-mode:screen;
+}
+.status{flex:none;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:rgba(226,236,250,.6);padding:0 6px}
+.status .time{font-size:13px;font-weight:600;color:rgba(240,247,255,.9)}
+.sig{display:flex;align-items:flex-end;gap:3px}
+.sig i{width:3px;border-radius:2px;background:rgba(235,244,255,.75)}
+.sig i:nth-child(1){height:4px}.sig i:nth-child(2){height:6px}.sig i:nth-child(3){height:8px}.sig i:nth-child(4){height:10px}
+.clockcard{
+  flex:none;border-radius:20px;padding:16px 18px;
+  background:linear-gradient(150deg,rgba(76,194,255,.20),rgba(94,92,230,.16) 55%,rgba(255,255,255,.04));
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.24),0 20px 40px -28px #000;
+  display:flex;justify-content:space-between;align-items:flex-end;
+}
+.clockcard .big{font-size:38px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.clockcard .sub{font-size:11.5px;color:rgba(224,234,248,.62);margin-top:4px}
+.clockcard .weather{text-align:right;font-size:11.5px;color:rgba(224,234,248,.66);line-height:1.6}
+.clockcard .weather b{display:block;font-size:17px;font-weight:600;color:rgba(245,250,255,.94)}
+
+.grid{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,112px);gap:14px;padding:2px 2px 0;flex:none}
+.app{display:flex;flex-direction:column;align-items:center;gap:7px}
+.app .ic{
+  width:104px;height:104px;border-radius:19px;display:grid;place-items:center;
+  box-shadow:0 14px 26px -16px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.34);
+  border:1px solid rgba(255,255,255,.10);
+}
+.app .ic svg{width:46%;height:46%;opacity:.95}
+.app .nm{font-size:10.5px;color:rgba(226,236,250,.72);letter-spacing:.01em}
+.g1{background:linear-gradient(160deg,#7ec8ff,#3d8cf0)}
+.g2{background:linear-gradient(160deg,#ffb37a,#e8654f)}
+.g3{background:linear-gradient(160deg,#a6e3c0,#38a86e)}
+.g4{background:linear-gradient(160deg,#c7b6ff,#6c5ce7)}
+.g5{background:linear-gradient(160deg,#ffd98a,#e8a33d)}
+.g6{background:linear-gradient(160deg,#9fe8ea,#2f96a8)}
+.g7{background:linear-gradient(160deg,#ffb1c8,#d95c8a)}
+.g8{background:linear-gradient(160deg,#c9d3e6,#78839b)}
+/* 文件夹瓷砖：2×2 */
+.tile{
+  grid-column:span 2;grid-row:span 2;border-radius:26px;padding:13px;
+  background:linear-gradient(170deg,rgba(94,92,230,.30),rgba(40,40,60,.55) 60%,rgba(30,30,42,.6));
+  border:1px solid rgba(255,255,255,.16);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.30),0 24px 44px -28px #000;
+  display:flex;flex-direction:column;justify-content:space-between;
+}
+.tile .mini{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.tile .mini i{aspect-ratio:1;border-radius:11px;box-shadow:inset 0 1px 0 rgba(255,255,255,.4)}
+.tile .cap{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:rgba(232,240,252,.78)}
+.tile .cap span{display:flex;align-items:center;gap:6px}
+.tile .cap .badge{
+  font-size:9.5px;padding:2px 7px;border-radius:99px;letter-spacing:.04em;
+  background:rgba(76,194,255,.2);border:1px solid rgba(76,194,255,.45);color:#bfe9ff;
+}
+.dock{
+  flex:none;margin-top:auto;height:78px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:13px;padding:0 16px;
+  background:linear-gradient(180deg,rgba(255,255,255,.11),rgba(255,255,255,.04));
+  border:1px solid rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.28);
+}
+.dock .di{width:46px;height:46px;border-radius:14px;box-shadow:0 10px 20px -12px #000,inset 0 1px 0 rgba(255,255,255,.4)}
+.dock .sep{width:1px;height:30px;background:rgba(255,255,255,.14);margin:0 3px}
+
+/* ================= 第 2 屏 ================= */
+.s2{padding:76px 88px 0}
+.s2 header{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:26px}
+.s2 h2{font-size:38px;letter-spacing:-.03em;font-weight:700;line-height:1.2}
+.s2 h2 em{font-style:normal;color:#8fd8ff}
+.s2 .meta{font-size:13px;color:var(--ink-faint);text-align:right;line-height:1.8}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.card{
+  position:relative;border-radius:var(--r-md);padding:22px 24px 20px;min-height:0;
+  background:linear-gradient(158deg,rgba(255,255,255,.072),rgba(255,255,255,.022) 46%,rgba(255,255,255,.04));
+  border:1px solid var(--line);
+  box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.16);
+  backdrop-filter:blur(20px) saturate(140%);
+  overflow:hidden;
+}
+.card::before{
+  content:"";position:absolute;left:0;top:0;width:100%;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);
+}
+.card::after{
+  content:"";position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;
+  background:radial-gradient(circle,var(--tint),transparent 68%);opacity:.30;pointer-events:none;
+}
+.card .head{display:flex;align-items:center;gap:13px}
+.card .ico{
+  width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:none;
+  background:linear-gradient(158deg,var(--tint),rgba(255,255,255,.06));
+  border:1px solid rgba(255,255,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.35);
+}
+.card .ico svg{width:21px;height:21px}
+.card h3{font-size:19px;font-weight:650;letter-spacing:-.01em}
+.card .cnt{
+  margin-left:auto;font-size:11.5px;letter-spacing:.06em;color:rgba(235,245,255,.72);
+  padding:4px 10px;border-radius:99px;background:rgba(255,255,255,.06);border:1px solid var(--line-soft);
+}
+.card ul{margin-top:16px;display:flex;flex-direction:column;gap:10px;list-style:none}
+.card li{position:relative;padding-left:16px;font-size:13.5px;line-height:1.6;color:rgba(219,229,243,.80)}
+.card li::before{
+  content:"";position:absolute;left:0;top:9px;width:5px;height:5px;border-radius:99px;
+  background:var(--tint);box-shadow:0 0 8px var(--tint);
+}
+.card li b{color:#fff;font-weight:600}
+.c1{--tint:#4cc2ff}.c2{--tint:#8f7bff}.c3{--tint:#40c9a8}.c4{--tint:#f0a03c}
+.banner{
+  margin-top:18px;height:72px;border-radius:var(--r-md);padding:0 26px;
+  display:flex;align-items:center;gap:16px;
+  background:linear-gradient(96deg,rgba(76,194,255,.14),rgba(94,92,230,.10) 52%,rgba(255,255,255,.03));
+  border:1px solid rgba(120,200,255,.22);
+}
+.banner .k{font-size:13px;color:rgba(220,235,250,.62);letter-spacing:.04em}
+.banner .v{font-size:16px;font-weight:600;letter-spacing:-.01em}
+.banner .split{width:1px;height:26px;background:rgba(255,255,255,.14)}
+.banner .grow{flex:1}
+.banner .tag{font-size:12px;color:#a9e2ff;display:flex;align-items:center;gap:7px}
+.banner .tag i{width:6px;height:6px;border-radius:99px;background:#4cc2ff;box-shadow:0 0 10px #4cc2ff}
+
+/* ================= 第 3 屏 ================= */
+.s3{padding:78px 88px 96px;display:flex;flex-direction:column}
+.s3 .cols{display:grid;grid-template-columns:1.15fr .85fr;gap:26px;margin-top:26px;
+  flex:1;align-items:stretch;margin-bottom:34px}
+.s3 .headline{margin-bottom:2px}
+.s3 h2{font-size:40px;letter-spacing:-.03em;font-weight:700}
+.s3 .sub{margin-top:12px;font-size:15px;color:var(--ink-dim)}
+.panel{
+  display:flex;flex-direction:column;
+  border-radius:var(--r-lg);padding:28px 32px;
+  background:linear-gradient(158deg,rgba(255,255,255,.07),rgba(255,255,255,.022) 50%,rgba(255,255,255,.04));
+  border:1px solid var(--line);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.16);
+  backdrop-filter:blur(22px) saturate(140%);
+}
+.panel h4{font-size:13px;letter-spacing:.1em;color:rgba(200,220,240,.55);font-weight:600;text-transform:uppercase}
+.steps{margin-top:22px;display:flex;flex-direction:column;gap:24px}
+.step{display:flex;gap:15px}
+.step .num{
+  width:30px;height:30px;border-radius:10px;flex:none;display:grid;place-items:center;
+  font-size:12.5px;font-weight:700;color:#bfe9ff;
+  background:rgba(76,194,255,.14);border:1px solid rgba(76,194,255,.3);
+}
+.step .t{font-size:15.5px;font-weight:600;margin-bottom:5px}
+.step .d{font-size:13px;line-height:1.68;color:rgba(214,225,240,.68)}
+.step .d code{
+  font-family:"Cascadia Mono","Consolas",monospace;font-size:12px;
+  padding:1px 6px;border-radius:6px;background:rgba(255,255,255,.07);color:#cfe8ff;
+}
+.side{display:flex;flex-direction:column;gap:22px}
+.side .verify{flex:1}
+.known{padding:26px 28px}
+.known ul{margin-top:16px;list-style:none;display:flex;flex-direction:column;gap:12px}
+.known li{font-size:13px;line-height:1.6;color:rgba(216,226,240,.72);padding-left:16px;position:relative}
+.known li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;border-radius:99px;background:rgba(255,190,120,.8)}
+.verify{padding:24px 28px;display:flex;flex-direction:column;gap:14px}
+.note{margin-top:auto;padding-top:18px;border-top:1px dashed rgba(255,255,255,.10);
+  font-size:12px;color:rgba(198,214,232,.45);letter-spacing:.02em}
+.vrow{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:rgba(216,226,240,.72)}
+.vrow b{font-size:13.5px;color:#eaf4ff;font-weight:600}
+.ok{display:inline-flex;align-items:center;gap:6px;color:#8ee6b8;font-weight:600;font-size:12.5px}
+.ok svg{width:13px;height:13px}
+.ending{
+  margin-top:auto;height:118px;border-radius:var(--r-lg);padding:0 34px;
+  display:flex;align-items:center;gap:20px;
+  background:linear-gradient(96deg,rgba(76,194,255,.16),rgba(94,92,230,.12) 55%,rgba(64,176,190,.10));
+  border:1px solid rgba(130,200,255,.24);box-shadow:inset 0 1px 0 rgba(255,255,255,.2);
+}
+.ending .vlabel{font-size:12px;color:rgba(214,231,248,.6);letter-spacing:.04em}
+.ending .vnum{font-size:24px;font-weight:700;letter-spacing:-.02em;margin-top:4px}
+.ending .vnum span{color:#9fdcff}
+.ending .grow{flex:1}
+.ending .link{
+  display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#04121c;
+  height:46px;padding:0 22px;border-radius:13px;
+  background:linear-gradient(180deg,#8ad8ff,#4cc2ff);
+  box-shadow:0 14px 30px -14px rgba(76,194,255,.9),inset 0 1px 0 rgba(255,255,255,.7);
+}
+.ending .link svg{width:15px;height:15px}
+.ending .minor{font-size:11.5px;color:rgba(200,215,232,.42);text-align:right;line-height:1.7}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+<!-- ==================== 第 1 屏 · 欢迎 ==================== -->
+<section class="screen s1 active" id="s1">
+  <div class="blob a"></div><div class="blob b"></div><div class="blob c"></div>
+
+  <div class="brand">
+    <span class="logo">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="4" stroke="#04121c" stroke-width="2"/><path d="M9 18h6" stroke="#04121c" stroke-width="2" stroke-linecap="round"/></svg>
+    </span>
+    <span>掌镜桌面</span><span style="opacity:.4">/</span><b>8.5.0</b>
+  </div>
+
+  <div class="hero-left">
+    <div class="eyebrow"><i class="dot"></i>新版本已就绪 · 内部包 v15d</div>
+    <h1>欢迎使用<br><span class="accent">新版本</span></h1>
+    <p class="lede">
+      这一版没有新功能。我们把 <b>25 个「用着用着就觉得不对」的瞬间</b>逐个复现、逐个修掉——
+      从删错图标、瓷砖压格，到删除的组件自己复活。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="n">25</div><div class="k">类缺陷收口</div></div>
+      <div class="stat"><div class="n">4</div><div class="k">条功能链路</div></div>
+      <div class="stat"><div class="n">115</div><div class="k">测试全绿</div></div>
+      <div class="stat"><div class="n">0</div><div class="k">配置迁移</div></div>
+    </div>
+    <div class="cta">
+      <button class="btn primary">看看改了什么
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h13M13 6l6 6-6 6" stroke="#04121c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="btn ghost">以后再说</button>
+    </div>
+    <div class="quick">
+      <span><i></i>不再删错图标</span>
+      <span><i></i>瓷砖不再压格</span>
+      <span><i></i>删除的组件不再复活</span>
+    </div>
+    <div class="foot">构建 2026-10-29 · Windows 10 / 11 · 你的布局与组件原样保留</div>
+  </div>
+
+  <!-- 桌面预览 -->
+  <div class="preview">
+    <div class="status">
+      <div class="time">10:24</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span>周四 10月29日</span>
+        <span class="sig"><i></i><i></i><i></i><i></i></span>
+      </div>
+    </div>
+
+    <div class="clockcard">
+      <div>
+        <div class="big">10:24</div>
+        <div class="sub">10月29日 星期四</div>
+      </div>
+      <div class="weather"><b>21°</b>多云 · 杭州</div>
+    </div>
+
+    <div class="grid">
+      <div class="app"><div class="ic g1"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="3" stroke="#fff" stroke-width="1.7"/><path d="M4 7l8 6 8-6" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg></div><div class="nm">邮件</div></div>
+      <div class="app"><div class="ic g2"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="7" width="18" height="13" rx="3" stroke="#fff" stroke-width="1.7"/><circle cx="12" cy="13.5" r="3.2" stroke="#fff" stroke-width="1.7"/><path d="M8.5 7l1.2-2h4.6l1.2 2" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg></div><div class="nm">相机</div></div>
+
+      <div class="tile">
+        <div class="mini">
+          <i style="background:linear-gradient(150deg,#ffb37a,#e8654f)"></i>
+          <i style="background:linear-gradient(150deg,#a6e3c0,#38a86e)"></i>
+          <i style="background:linear-gradient(150deg,#c7b6ff,#6c5ce7)"></i>
+          <i style="background:linear-gradient(150deg,#ffd98a,#e8a33d)"></i>
+        </div>
+        <div class="cap"><span>工作</span><span class="badge">2×2</span></div>
+      </div>
+
+      <div class="app"><div class="ic g3"><svg viewBox="0 0 24 24" fill="none"><path d="M9 18V6l10-2v12" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="6.5" cy="18" r="2.6" stroke="#fff" stroke-width="1.7"/><circle cx="16.5" cy="16" r="2.6" stroke="#fff" stroke-width="1.7"/></svg></div><div class="nm">音乐</div></div>
+      <div class="app"><div class="ic g4"><svg viewBox="0 0 24 24" fill="none"><path d="M12 21s7-5.2 7-10.4A7 7 0 005 10.6C5 15.8 12 21 12 21z" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="10.2" r="2.4" stroke="#fff" stroke-width="1.7"/></svg></div><div class="nm">地图</div></div>
+      <div class="app"><div class="ic g5"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="7" height="7" rx="2" stroke="#fff" stroke-width="1.7"/><rect x="13" y="4" width="7" height="7" rx="2" stroke="#fff" stroke-width="1.7"/><rect x="4" y="13" width="7" height="7" rx="2" stroke="#fff" stroke-width="1.7"/><rect x="13" y="13" width="7" height="7" rx="2" stroke="#fff" stroke-width="1.7"/></svg></div><div class="nm">组件库</div></div>
+      <div class="app"><div class="ic g6"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="#fff" stroke-width="1.7"/><path d="M3 9h18M8 4v5" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg></div><div class="nm">日历</div></div>
+      <div class="app"><div class="ic g7"><svg viewBox="0 0 24 24" fill="none"><path d="M21 12a9 9 0 11-4.2-7.6L21 5l-.8 4.2" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="12" r="2.6" stroke="#fff" stroke-width="1.7"/></svg></div><div class="nm">设置</div></div>
+      <div class="app"><div class="ic g8"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="3" stroke="#fff" stroke-width="1.7"/><path d="M4 16l5-5 4 4 3-3 4 4" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="9" r="1.2" fill="#fff"/></svg></div><div class="nm">相册</div></div>
+    </div>
+
+    <div class="dock">
+      <div class="di" style="background:linear-gradient(150deg,#7ec8ff,#3d8cf0)"></div>
+      <div class="di" style="background:linear-gradient(150deg,#ffb37a,#e8654f)"></div>
+      <div class="di" style="background:linear-gradient(150deg,#a6e3c0,#38a86e)"></div>
+      <div class="di" style="background:linear-gradient(150deg,#c7b6ff,#6c5ce7)"></div>
+      <div class="sep"></div>
+      <div class="di" style="background:linear-gradient(150deg,#c9d3e6,#78839b)"></div>
+    </div>
+  </div>
+
+</section>
+
+<!-- ==================== 第 2 屏 · 改了什么 ==================== -->
+<section class="screen s2" id="s2">
+  <div class="blob a" style="opacity:.32"></div><div class="blob b" style="opacity:.30"></div>
+
+  <div class="brand">
+    <span class="logo">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="4" stroke="#04121c" stroke-width="2"/><path d="M9 18h6" stroke="#04121c" stroke-width="2" stroke-linecap="round"/></svg>
+    </span>
+    <span>掌镜桌面</span><span style="opacity:.4">/</span><b>8.5.0</b>
+  </div>
+
+  <header>
+    <h2>这一版，修的都是<br><em>「以为软件坏了」</em>的瞬间</h2>
+    <div class="meta">25 类缺陷 · 每条先复现再改<br>新增 42 项判据 · 全量回归通过</div>
+  </header>
+
+  <div class="cards">
+    <div class="card c1">
+      <div class="head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="2" stroke="#dff4ff" stroke-width="1.8"/><rect x="14" y="3" width="7" height="7" rx="2" stroke="#dff4ff" stroke-width="1.8"/><rect x="3" y="14" width="7" height="7" rx="2" stroke="#dff4ff" stroke-width="1.8"/><rect x="14" y="14" width="7" height="7" rx="2" stroke="#dff4ff" stroke-width="1.8"/></svg></span>
+        <h3>桌面与选择</h3><span class="cnt">9 类</span>
+      </div>
+      <ul>
+        <li>把应用拖进文件夹合并，<b>应用本体不再消失</b>；文件夹里还是完整的</li>
+        <li>跨页移动后切到无界模式，图标<b>不再跳回第 1 页</b></li>
+        <li>框选只收当前页可见图标，翻页后 Delete <b>不会删掉看不见的东西</b></li>
+        <li>放大贴在最后一列的文件夹，瓷砖<b>整块留在屏内</b>，邻居自动让位</li>
+        <li>「移动到分页」按真实占格分配，<b>不再压住目标页的图标</b></li>
+      </ul>
+    </div>
+
+    <div class="card c2">
+      <div class="head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" stroke="#eae6ff" stroke-width="1.8" stroke-linejoin="round"/></svg></span>
+        <h3>文件夹弹窗</h3><span class="cnt">6 类</span>
+      </div>
+      <ul>
+        <li>增删成员时弹窗<b>留在原地</b>，不再甩到屏幕中央</li>
+        <li>「移出文件夹」的图标<b>落在当前页</b>，不用翻回第 1 页找</li>
+        <li>125% 缩放下标题不再压住右上角按钮，长名自动省略</li>
+        <li>文件夹已被外部解散时，弹窗<b>不能再吞掉桌面图标</b></li>
+        <li>右键「文件夹大小」的勾选，<b>按你设的默认尺寸</b>显示</li>
+      </ul>
+    </div>
+
+    <div class="card c3">
+      <div class="head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="#dcfff2" stroke-width="1.8"/><path d="M3 9h18" stroke="#dcfff2" stroke-width="1.8"/><circle cx="7" cy="6.6" r="1" fill="#dcfff2"/><circle cx="10" cy="6.6" r="1" fill="#dcfff2"/></svg></span>
+        <h3>桌面小组件</h3><span class="cnt">5 类</span>
+      </div>
+      <ul>
+        <li>删掉内置时钟 / 便签 / 面板，<b>重启不会再回来</b></li>
+        <li>编辑态改尺寸或松手，组件<b>不再每次往左上漂一格</b></li>
+        <li>总开关关闭时新添加的组件<b>不会偷偷出现</b></li>
+        <li>总显隐按页归属，其它页的组件不会一起亮在当前页</li>
+        <li>组件挪到第 2 页，<b>切无界模式后仍在第 2 页</b></li>
+      </ul>
+    </div>
+
+    <div class="card c4">
+      <div class="head">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="12" width="18" height="8" rx="3" stroke="#fff0dc" stroke-width="1.8"/><path d="M7 12V9a5 5 0 0110 0v3" stroke="#fff0dc" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+        <h3>Dock 与设置</h3><span class="cnt">5 类</span>
+      </div>
+      <ul>
+        <li>Dock 满 24 项再拖入，<b>不再挤掉末尾那一项</b></li>
+        <li>「恢复默认」保留 <b>Dock 条目与天气城市</b>，并撤销开机自启</li>
+        <li>滑条调到 0 就是 0，<b>不再自己变回 75%</b></li>
+        <li>恢复默认后桌面立即跟着变，不用重启程序</li>
+        <li>把「阴影 / 悬停填充 / 预览边框」调到 0，<b>就真的是关掉</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="banner">
+    <div><div class="k">修复方式</div><div class="v">先写复现探针，再动代码</div></div>
+    <div class="split"></div>
+    <div><div class="k">回归判据</div><div class="v">test_audit_v15d.py · 42 项</div></div>
+    <div class="split"></div>
+    <div><div class="k">全量测试</div><div class="v">115 个文件 + smoke</div></div>
+    <div class="grow"></div>
+    <div class="tag"><i></i>零配置迁移 · 直接覆盖安装</div>
+  </div>
+
+</section>
+
+<!-- ==================== 第 3 屏 · 升级提示 ==================== -->
+<section class="screen s3" id="s3">
+  <div class="blob a" style="opacity:.26;left:-220px;top:-120px"></div>
+  <div class="blob c" style="opacity:.26"></div>
+
+  <div class="brand">
+    <span class="logo">
+      <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="4" stroke="#04121c" stroke-width="2"/><path d="M9 18h6" stroke="#04121c" stroke-width="2" stroke-linecap="round"/></svg>
+    </span>
+    <span>掌镜桌面</span><span style="opacity:.4">/</span><b>8.5.0</b>
+  </div>
+
+  <div class="headline">
+    <h2>升级只有一步：覆盖安装</h2>
+    <div class="sub">你的图标排布、文件夹、组件、Dock 与设置全部沿用原来那份数据。</div>
+  </div>
+
+  <div class="cols">
+  <div class="panel">
+    <h4>Upgrade notes</h4>
+    <div class="steps">
+      <div class="step">
+        <div class="num">01</div>
+        <div><div class="t">不需要迁移配置</div>
+          <div class="d">本版没有改存储结构，<code>state.json</code> 原样读取。装完直接就是你熟悉的桌面。</div></div>
+      </div>
+      <div class="step">
+        <div class="num">02</div>
+        <div><div class="t">「恢复默认」现在更克制</div>
+          <div class="d">只回滚出厂旋钮，<b>保留 Dock 应用列表、天气城市与分页规则</b>，并同步撤销开机自启。</div></div>
+      </div>
+      <div class="step">
+        <div class="num">03</div>
+        <div><div class="t">历史脏数据一键归位</div>
+          <div class="d">如果旧布局里出现过「瓷砖压着图标」或「组件被挤到下一页」，执行一次
+            <b>「重新扫描桌面 / 整理布局」</b>即可。</div></div>
+      </div>
+    </div>
+    <div class="note">没有新增依赖，也没有改存储结构。</div>
+  </div>
+
+  <div class="side">
+    <div class="panel known">
+      <h4>Known limitations</h4>
+      <ul>
+        <li>桌面面板的最小尺寸与 2×2 卡片仍有冲突：缩到很小再重启，跨度可能变大</li>
+        <li>改分辨率或图标尺寸后，页底组件可能按新行数落到下一页</li>
+        <li>Dock 四向内边距的左右 / 上下主轴仍按统一值计算</li>
+        <li>文件夹 6×6 + 200% 缩放的极端组合，最后一页容量偏小</li>
+      </ul>
+    </div>
+    <div class="panel verify">
+      <h4>Verified</h4>
+      <div class="vrow"><span>全量测试</span><span class="ok"><svg viewBox="0 0 24 24" fill="none"><path d="M4 12.5l5 5L20 6.5" stroke="#8ee6b8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>115 / 115</span></div>
+      <div class="vrow"><span>新增回归判据</span><b>42 项</b></div>
+      <div class="vrow"><span>文档一致性</span><b>ERROR 0</b></div>
+      <div class="vrow"><span>冻结包校验</span><b>符号全部命中</b></div>
+    </div>
+  </div>
+  </div>
+
+  <div class="ending">
+    <div class="logo" style="width:46px;height:46px;border-radius:14px;background:linear-gradient(150deg,#4cc2ff,#5e5ce6);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.5)">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="4" stroke="#04121c" stroke-width="2"/><path d="M9 18h6" stroke="#04121c" stroke-width="2" stroke-linecap="round"/></svg>
+    </div>
+    <div>
+      <div class="vlabel">当前版本</div>
+      <div class="vnum">版本 8.5.0 <span>（v15d）</span></div>
+    </div>
+    <div class="grow"></div>
+    <div class="minor">构建 2026-10-29<br>Windows 10 / 11 · x64</div>
+    <a class="link" href="https://github.com/a435630144/PhoneDesktopForWindow/releases/tag/8.5.0">
+      查看完整发布说明
+      <svg viewBox="0 0 24 24" fill="none"><path d="M7 17L17 7M17 7H9M17 7v8" stroke="#04121c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+
+</section>
+
+  <div class="dots" id="dots"><i class="on"></i><i></i><i></i></div>
+</div>
+
+<script>
+(function () {
+  var deck = document.getElementById('deck');
+  var screens = Array.prototype.slice.call(deck.querySelectorAll('.screen'));
+  var dots = Array.prototype.slice.call(document.getElementById('dots').querySelectorAll('i'));
+  var index = 0;
+  if (/[?&]snap=1/.test(location.search)) document.body.classList.add('snap');
+  function fit() {
+    var pad = 16;
+    var s = Math.min((innerWidth - pad * 2) / 1440, (innerHeight - pad * 2) / 900, 1);
+    deck.style.setProperty('--s', Math.max(0.2, s));
+  }
+  function show(n) {
+    index = Math.max(0, Math.min(screens.length - 1, n));
+    screens.forEach(function (el, k) { el.classList.toggle('active', k === index); });
+    dots.forEach(function (d, k) { d.classList.toggle('on', k === index); });
+    try { if (history.replaceState) history.replaceState(null, '', '#s' + (index + 1)); } catch (e) {}
+  }
+  dots.forEach(function (d, k) { d.addEventListener('click', function () { show(k); }); });
+  addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); show(index + 1); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); show(index - 1); }
+  });
+  addEventListener('resize', fit);
+  fit();
+  var h = parseInt((location.hash || '').replace('#s', ''), 10);
+  show(isNaN(h) ? 0 : h - 1);
+  window.showScreen = show;
+})();
+</script>
+
+</body>
+</html>
