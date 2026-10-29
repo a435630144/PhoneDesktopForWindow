@@ -122,12 +122,21 @@ def open_settings(window, storage, layer, page="general"):
     """
     global _dialog
     try:
-        if _dialog is not None:
+        if _dialog is not None and _dialog.isVisible():
+            # 只有"此刻真的开着"才复用。QDialog 没设 WA_DeleteOnClose，
+            # accept() 只是隐藏——对象会一直活着，控件停在第一次打开
+            # 那一刻的值。用户在别处改了模式/图标档位，再打开设置看到的
+            # 是旧值（控件与桌面相反），且没有任何"重新读盘"的入口。
             _dialog.select_page(page)
             _dialog.show()
             _dialog.raise_()
             _dialog.activateWindow()
             return _dialog
+        if _dialog is not None:
+            # 曾经打开、已关闭：销毁重建，保证每个控件都重新从 storage 回读。
+            # 复用隐藏实例是 v15e 修掉的"设置面板永远显示旧值"根因。
+            _dialog.deleteLater()
+            _dialog = None
     except RuntimeError:      # C++ 对象已被销毁（用户关窗后回收）
         _dialog = None
     dlg = SettingsDialog(window, storage, layer, page=page)
@@ -378,6 +387,10 @@ class SettingsDialog(QDialog):
             d.setObjectName("rowHint")
             d.setWordWrap(True)
             text.addWidget(d)
+            # 记在控件上：模式切换后要改文案（"锁定" ↔ 正常），_row 是
+            # 唯一能拿到这个 QLabel 的地方（v15e）。
+            if control is not None:
+                control._hint_label = d
         h.addLayout(text, 1)
         if control is not None:
             # 行标题同时写进控件：① 屏幕阅读器能念出这一行是什么；
@@ -1937,6 +1950,16 @@ class SettingsDialog(QDialog):
         self.sp_liquid_fps.blockSignals(True)
         self.sp_liquid_fps.setValue(liquid_glass.DEFAULT_FPS_CUSTOM)
         self.sp_liquid_fps.blockSignals(False)
+        # 液态是「总闸 + 每表面开关」两层，`liquid_dock` 也在 defaults 里。
+        # 旧实现只回填本页控件，Dock 页的开关仍显示"关"；用户随后动一下
+        # Dock，`_apply_dock` 就把那个 False 写回 storage——液态玻璃彻底
+        # 失效且找不到原因（v15e）。
+        box = getattr(self, "chk_dock_liquid", None)
+        if box is not None:
+            box.blockSignals(True)
+            box.setChecked(True)
+            box.blockSignals(False)
+            self._sync_dock_liquid()
         self._sync_liquid_controls()
         self._liquid_changed()
 
@@ -3206,6 +3229,31 @@ class SettingsDialog(QDialog):
             hook(on)
         else:
             self.storage.set_setting("widgets_only", on)
+        # 窗口会顺手把布局模式切成 free / 恢复旧模式；下拉必须重新读盘，
+        # 否则要么永远灰着（关掉模式后仍不可选），要么显示与实际相反。
+        self._sync_layout_mode_controls()
+
+    def _sync_layout_mode_controls(self):
+        """「仅小组件模式」与「布局模式」下拉的双向同步（v15e）。
+
+        两个控件是同一个旋钮的两面：仅组件模式强制 free（下拉置灰、显示
+        无界），关掉后恢复上一档。旧实现只在建窗时读一次 storage，切换
+        模式后另一边不更新——用户看到"灰的下拉永远改不了"或"显示网格、
+        选了却没反应"（被 set_layout_mode 的护栏吞掉）。
+        """
+        cmb = getattr(self, "cmb_layout_mode", None)
+        if cmb is None:
+            return
+        locked = bool(self.storage.get_setting("widgets_only"))
+        mode = grid_flow.layout_mode(self.storage)
+        cmb.blockSignals(True)
+        cmb.setCurrentIndex(max(0, cmb.findData(mode)))
+        cmb.blockSignals(False)
+        cmb.setEnabled(not locked)
+        hint = getattr(cmb, "_hint_label", None)
+        if hint is not None:
+            hint.setText(i18n.T("settings.mode.layout.hint_locked") if locked
+                         else i18n.T("settings.mode.layout.hint"))
 
     def _apply_takeover(self, checked):
         self.storage.set_takeover(bool(checked))

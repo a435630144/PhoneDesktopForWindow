@@ -85,15 +85,9 @@ class FloatingWidget(QWidget):
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
-        # 最小 1 格 = cell（v6 A2，指导文档 §2.2 连带修复）：旧硬编码
-        # 180x120 在 cell 变小后会把 1 格组件顶宽到跨 2.4 列（Qt
-        # minimumSize 兜底）；快照未就绪时回退旧值保持无头测试行为
-        from . import grid_flow as _gf
-        _m = _gf.current_metrics()
-        if _m is not None:
-            self.setMinimumSize(_m.cw, _m.ch)
-        else:
-            self.setMinimumSize(180, 120)
+        # 最小尺寸按形态给：锚定 = 1 格（v6 A2，旧硬编码 180×120 在 cell
+        # 变小后会把 1 格组件顶宽到跨 2.4 列）；悬浮 = 组件自己的内容下限。
+        self.setMinimumSize(*self._mode_minimum())
         # 锚定组件尺寸 = span × cell（M3：catalog 一等公民，碰撞 = 视觉边界）；
         # 悬浮组件沿用 entry 里保存的像素尺寸
         gw, gh = self._anchored_pixel_size()
@@ -377,6 +371,18 @@ class FloatingWidget(QWidget):
         self.storage.sync_free_pages({self.entry.get("id")})
         self.storage.save()
 
+    def _mode_minimum(self):
+        """当前形态下的窗口最小尺寸（v15e）。
+
+        锚定必须允许缩到 1 格：面板这类组件在悬浮态有内容下限
+        （200×260），旧实现无条件 setMinimumSize，于是锚定态把它缩到
+        3×1 时窗口被撑在 260px——`resizeEvent` 反推跨度又把"被夹住"
+        当成用户要更大，重启后面板摊成 3×3 压住下面几行图标。
+        """
+        from . import grid_flow as _gf
+        _m = _gf.current_metrics()
+        return (_m.cw, _m.ch) if _m is not None else (180, 120)
+
     def _span_from_geometry(self):
         """按当前**卡片**像素尺寸反推跨度（网格模式下的"碰撞形状"）。
 
@@ -424,6 +430,14 @@ class FloatingWidget(QWidget):
             return False
         cur = grid_flow.widget_span(self.storage, self.entry)
         if (cs, rs) == cur:
+            return False
+        # 被最小尺寸夹住的**那一轴**不是"用户选了更大的跨度"：只允许缩小，
+        # 不允许按夹住后的像素把跨度反推上去（v15e，面板重启后自增的根因）。
+        # 必须逐轴判断：3×4 缩成 3×1 时高度被夹、宽度可能是正常的放大，
+        # 用 or 合并会把"宽度 2→4"这种合法同步一起挡掉（S2/S4 判据）。
+        grow_w = cs > cur[0] and card.width() <= self.minimumWidth() + 1
+        grow_h = rs > cur[1] and card.height() <= self.minimumHeight() + 1
+        if grow_w or grow_h:
             return False
         col, row = grid_flow.clamp_widget_cell(
             self.storage, int(self.entry.get("col", 0)),

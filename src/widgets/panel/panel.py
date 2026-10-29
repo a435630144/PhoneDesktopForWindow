@@ -371,11 +371,21 @@ class DesktopPanel(GlassWidget):
     def __init__(self, storage, entry):
         # interactive=True：搜索框 / 按钮需要键盘焦点
         super().__init__(storage, entry, interactive=True)
-        self.setMinimumSize(200, 260)
+        self.setMinimumSize(*self._mode_minimum())
         self._apps_cache = None
         self._cards = []
         self._build()
         self._apply_style()
+
+    def _mode_minimum(self):
+        """悬浮态要容得下搜索框 + 至少一张卡片；锚定态交给基类（1 格）。
+
+        200×260 是**内容**下限，不该成为网格里的碰撞尺寸——否则用户把
+        面板缩成 3×1，窗口被撑住、跨度反推回 3×3（v15e）。
+        """
+        if getattr(self, "entry", {}).get("anchored"):
+            return super()._mode_minimum()
+        return (200, 260)
 
     # ---------- 配置（entry.settings） ----------
     def _opt(self, key, default=True) -> bool:

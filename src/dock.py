@@ -295,7 +295,8 @@ def metrics(ui_scale, count: int, base: int = DOCK_ICON,
             gap: int = DOCK_GAP, pad: int = DOCK_PAD,
             hover: float = DOCK_HOVER,
             pad_t: int = None, pad_b: int = None,
-            pad_l: int = None, pad_r: int = None) -> DockMetrics:
+            pad_l: int = None, pad_r: int = None,
+            position: str = "bottom") -> DockMetrics:
     """Dock 几何：图标/间距/内边距只随 `ui_scale` 线性放大。
 
     条带厚度 = 副轴两向内边距之和 + **静止**图标边长（v14r 改模型）。
@@ -321,19 +322,24 @@ def metrics(ui_scale, count: int, base: int = DOCK_ICON,
         h = max(1.0, min(1.5, float(hover)))
     except (TypeError, ValueError):
         h = DOCK_HOVER
-    # 厚度取副轴两向之和；长度取主轴两向之和。
-    # 水平 dock（bottom/top）：thickness 用 pt+pb，length 用 pl+pr
-    # 垂直 dock（left/right）：thickness 用 pl+pr，length 用 pt+pb
-    # 这里保守取 max——两种方向下都不会画出比实际小的窗口。
-    cross = max(pt + pb, pl + pr)
-    main = min(pt + pb, pl + pr)
+    # 厚度取**副轴**两向之和，长度取**主轴**两向之和（v15e）。
+    # 旧实现按 max/min 保守取值：左/右位 Dock 的上下内边距被忽略
+    # （主轴仍用统一 pad）、条带还莫名变厚 16px，最右图标被条带边缘
+    # 切掉一截。方向必须显式参与计算。
+    pos = normalize_position(position)
+    if pos in ("bottom", "top"):
+        cross, main, pad_main = pt + pb, pl + pr, pl
+    else:
+        cross, main, pad_main = pl + pr, pt + pb, pt
     thickness = cross + icon
     slots = max(MIN_SLOTS, min(DOCK_MAX_ITEMS, max(0, int(count))))
     length = main + slots * icon + (slots - 1) * g
-    return DockMetrics(icon, g, p, thickness, length, slots, h, pt, pb, pl, pr)
+    return DockMetrics(icon, g, pad_main, thickness, length, slots, h,
+                       pt, pb, pl, pr)
 
 
-def metrics_for(storage, count: int = 0) -> DockMetrics:
+def metrics_for(storage, count: int = 0,
+                position: str = None) -> DockMetrics:
     """按当前设置求一次 Dock 几何（**唯一入口**，别再各自传 ui_scale）。"""
     if count <= 0:
         try:
@@ -341,9 +347,11 @@ def metrics_for(storage, count: int = 0) -> DockMetrics:
         except Exception:      # noqa: BLE001
             count = 0
     pt, pb, pl, pr = pad_4(storage)
+    pos = normalize_position(position if position is not None
+                             else storage.get_setting("dock_position"))
     return metrics(storage.ui_scale(), count, icon_base(storage),
                    gap_px(storage), pad_px(storage), hover_ratio(storage),
-                   pad_t=pt, pad_b=pb, pad_l=pl, pad_r=pr)
+                   pad_t=pt, pad_b=pb, pad_l=pl, pad_r=pr, position=pos)
 
 
 def normalize_position(position) -> str:
@@ -422,11 +430,13 @@ def item_rect(bar, position, m: DockMetrics, index: int) -> tuple:
     pos = normalize_position(position)
     step = m.icon + m.gap
     if pos in ("bottom", "top"):
-        ix = x + m.pad + int(index) * step
-        iy = y + (h - m.icon) // 2
+        # 主轴起点 / 副轴落点都用**该方向**的内边距：四向内边距不是装饰，
+        # 用户把"左"调到 20 就该看到图标整体右移 20，而不是条带变厚。
+        ix = x + (m.pad_l or m.pad) + int(index) * step
+        iy = y + (m.pad_t if m.pad_t else (h - m.icon) // 2)
     else:
-        ix = x + (w - m.icon) // 2
-        iy = y + m.pad + int(index) * step
+        ix = x + (m.pad_l if m.pad_l else (w - m.icon) // 2)
+        iy = y + (m.pad_t or m.pad) + int(index) * step
     return (ix, iy, m.icon, m.icon)
 
 
@@ -1033,11 +1043,11 @@ class DockWindow(QWidget):
         p.setPen(QPen(theme.ACCENT, 3, Qt.SolidLine, Qt.RoundCap))
         # 窗口 == 条带，所以"局部坐标"= 条带内偏移（不掺 bar 原点）
         if self._position in ("bottom", "top"):
-            lx = m.pad + i * step - m.gap / 2.0
-            p.drawLine(QPointF(lx, m.pad * 0.6), QPointF(lx, h - m.pad * 0.6))
+            lx = (m.pad_l or m.pad) + i * step - m.gap / 2.0
+            p.drawLine(QPointF(lx, m.pad_t * 0.6), QPointF(lx, h - m.pad_b * 0.6))
         else:
-            ly = m.pad + i * step - m.gap / 2.0
-            p.drawLine(QPointF(m.pad * 0.6, ly), QPointF(w - m.pad * 0.6, ly))
+            ly = (m.pad_t or m.pad) + i * step - m.gap / 2.0
+            p.drawLine(QPointF(m.pad_l * 0.6, ly), QPointF(w - m.pad_r * 0.6, ly))
 
     def _paint_empty_hint(self, p, rect):
         p.setPen(QPen(theme.TEXT_FAINT, 1))
@@ -1090,9 +1100,9 @@ class DockWindow(QWidget):
             p.setPen(Qt.NoPen)
             p.setBrush(theme.ACCENT)
             if horizontal:
-                p.drawEllipse(QPoint(cx, ly + m.icon + m.pad // 2 + dot), dot, dot)
+                p.drawEllipse(QPoint(cx, ly + m.icon + m.pad_b // 2 + dot), dot, dot)
             else:
-                p.drawEllipse(QPoint(lx + m.icon + m.pad // 2, cy), dot, dot)
+                p.drawEllipse(QPoint(lx + m.icon + m.pad_r // 2, cy), dot, dot)
             p.setBrush(Qt.NoBrush)
 
     def _paint_fallback(self, p, rect, item):

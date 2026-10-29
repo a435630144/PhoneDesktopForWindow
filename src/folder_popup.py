@@ -59,7 +59,8 @@ from . import label_style
 from . import liquid_glass
 from . import theme
 from . import win32_layer
-from .folder_tint import LIQUID, auto_tint, folder_liquid, folder_tint
+from .folder_tint import (AUTO, LIQUID, auto_tint, folder_auto,
+                          folder_liquid, folder_tint)
 from .iconwidget import AppIcon
 
 
@@ -978,6 +979,7 @@ class FolderPopup(QWidget):
             self.close()
             return
         self.entry = found
+        self._sync_auto_tint()      # 加/删成员后自动配色跟着变（v15e）
         # v6 §6.2：_build 现在会按网格区中心重新定位——必须先 build
         # （移动 + 重建成员）再抓背板，否则背板抓在旧位置（窗口已移走）。
         # v15d：刷新必须**留在原地**（keep_pos）——用户拖出/移出一个成员，
@@ -1168,6 +1170,26 @@ class FolderPopup(QWidget):
         self.update()
 
     # ---------- M5：背景色 / 快速添加（2026-10-20 反馈 1 改为独立表单） ----------
+    def _sync_auto_tint(self) -> bool:
+        """「自动」配色跟随成员重算；变了就落盘并通知源图标（v15e）。
+
+        旧实现把 auto_tint() 的结果直接写进 entry["tint"]，等于选完就
+        定格：再加一个图标、颜色不动，用户以为"自动"坏了。
+        """
+        if not folder_auto(self.entry):
+            return False
+        color = self.auto_tint(self.entry.get("apps", []))
+        if color is None:
+            return False
+        old = QColor(str(self.entry.get("tint_auto") or ""))
+        if old.isValid() and (old.red(), old.green(), old.blue()) == (
+                color.red(), color.green(), color.blue()):
+            return False
+        self.entry["tint_auto"] = color.name()
+        self.storage.save()
+        self.tintChanged.emit()
+        return True
+
     def _set_tint(self, color):
         """写色并刷新文件夹图标。
 
@@ -1185,10 +1207,20 @@ class FolderPopup(QWidget):
             self.update()
             return
         if color is None:
-            color = self.auto_tint(self.entry.get("apps", []))
-            if color is None:
-                return                  # 取不到成员图标：保持现色
+            # 「自动」是**状态**，不是一次性算出来的颜色：存哨兵，
+            # 算出的色只进 tint_auto 缓存，成员一变就重算（v15e）。
+            self.entry["tint"] = AUTO
+            c = self.auto_tint(self.entry.get("apps", []))
+            if c is not None:
+                self.entry["tint_auto"] = c.name()
+            else:
+                self.entry.pop("tint_auto", None)   # 取不到图标时用预设兜底
+            self.storage.save()
+            self.tintChanged.emit()
+            self.update()
+            return
         self.entry["tint"] = color.name()
+        self.entry.pop("tint_auto", None)
         self.storage.save()
         self.tintChanged.emit()
         self.update()
@@ -1202,6 +1234,8 @@ class FolderPopup(QWidget):
         self._close_forms()
         if folder_liquid(self.entry):
             cur = LIQUID                 # 当前就是液态玻璃
+        elif folder_auto(self.entry):
+            cur = AUTO                   # 当前是「自动」：色板要能认出来
         else:
             try:
                 cur = QColor(self.entry.get("tint") or "")

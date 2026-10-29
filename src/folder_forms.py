@@ -31,7 +31,7 @@ from PySide6.QtWidgets import QColorDialog, QWidget
 from . import appsource
 from . import theme
 from . import win32_layer
-from .folder_tint import LIQUID, auto_tint
+from .folder_tint import AUTO, LIQUID, auto_tint
 
 FORM_RADIUS = 14
 FORM_BG = QColor(24, 25, 30, 248)
@@ -483,6 +483,9 @@ class TintForm(FolderForm):
     def _is_current(self, key, color):
         cur = self._current
         if isinstance(cur, str):
+            # 「自动」也以字符串哨兵传进来，必须先于液态判断（v15e）
+            if cur.strip().lower() == AUTO:
+                return key == "auto"
             return key == LIQUID
         if cur is None:
             return key == "auto"
