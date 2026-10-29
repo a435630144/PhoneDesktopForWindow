@@ -81,6 +81,14 @@ class DesktopWindow(QWidget):
         self.attached = False
         self._attach_retries = 0
         self._attach_known_failed = False
+        # 系统「显示桌面」态里的挂起计数（v15f）：此时 Progman 在 topmost
+        # 带，任何窗口都插不进桌面带，等它退出该态再挂，不消耗重试次数
+        self._attach_wait = 0
+        # 「本该可见」意图位（v15f）：系统「显示桌面」/ 第三方桌面整理会
+        # 绕过 Qt 直接 ShowWindow(SW_HIDE)，而 Qt 的 isVisible() 仍为 True——
+        # `show()` 于是变空操作，用户遇到「整个桌面没了，重启也不行」。
+        # BandGuard 每轮按这个标志决定要不要把窗口拉回来（见 band_guard）。
+        self._want_visible = False
         self._floating_flag_set = False
         self._popup = None
         self._scrim = None             # M5：文件夹幕布（弹窗下一层）
@@ -271,10 +279,14 @@ class DesktopWindow(QWidget):
 
     # ---------- 显示 / 隐藏 ----------
     def show_desktop(self):
+        # v15f：意图位先置——后面任何一条路径把窗口藏起来（显示桌面 /
+        # 第三方整理），守护都能据此把它拉回来。
+        self._want_visible = True
         if self.attached or self._attach_known_failed:
             self._show_current_mode()
             return
         self._attach_retries = 2
+        self._attach_wait = 0
         self._try_attach_once()
 
     def start_onboarding(self, replay: bool = False):
@@ -290,10 +302,23 @@ class DesktopWindow(QWidget):
     def _try_attach_once(self):
         if self.attached:
             return
+        # 等待期间用户可能已经从托盘把桌面收起来：延迟重试不能再把窗口弹回来
+        if not self._want_visible:
+            return
+        # 系统正在「显示桌面」（Win+D / 任务栏末端）：Progman 被提到 topmost
+        # 带，此刻插桌面带必然校验失败。等它退出该态再挂——这是**暂时**状态，
+        # 不能拿它消耗重试次数，否则用户"隐藏状态下退出、再打开"就会一路
+        # 掉进悬浮模式（原生图标还被我们藏着，桌面看起来彻底没了）。
+        if win32_layer.progman_is_topmost() and self._attach_wait < 40:
+            self._attach_wait += 1
+            QTimer.singleShot(800, self._try_attach_once)
+            return
         screen = QApplication.primaryScreen().availableGeometry()
         self.setGeometry(screen)
         # 先显示再挂载：挂载后的可见性 / z-order 检查才有意义（未显示的窗口恒为 false）
         self.show()
+        # Qt 的 isVisible() 可能和真实窗口不同步（被外部藏过）：显式顶一次
+        win32_layer.show_no_activate(int(self.winId()))
         self.update()  # 强制全窗重绘：命中填充（alpha=2）立即进入 surface
         self._sync_native_icons()
         if attach_to_desktop(self, layer=win32_layer.BAND_LAYER_DESKTOP):
@@ -325,7 +350,12 @@ class DesktopWindow(QWidget):
         self.setGeometry(QRect(screen.left() + 60, screen.top() + 40,
                                min(screen.width(), 1180), min(screen.height(), 780)))
         self.setWindowOpacity(FLOATING_OPACITY)
+        self._want_visible = True
         self.show()
+        win32_layer.show_no_activate(int(self.winId()))
+        # v15f：挂载失败 = 我们只是一块小浮窗，不能继续扣着原生桌面图标——
+        # 否则用户看到的是"空桌面 + 一块浮窗"，会以为整个程序废了。
+        win32_layer.set_native_icons_visible(True)
         self._update_grid_metrics()
         self.visibilityChanged.emit(True)
 
@@ -341,7 +371,11 @@ class DesktopWindow(QWidget):
             self._enter_floating_mode()
             return
         self.setWindowOpacity(1.0)
+        self._want_visible = True
         self.show()
+        # 不信任 Qt 的可见状态：窗口可能被系统"显示桌面"直接 ShowWindow(HIDE)
+        # 过，此时 show() 是空操作，必须显式顶回（SW_SHOWNA 不抢焦点）。
+        win32_layer.show_no_activate(int(self.winId()))
         self.update()  # 强制全窗重绘：命中填充（alpha=2）立即进入 surface
         self._sync_native_icons()
         # 重新显示后 Windows 可能改变 z-order，重新插回桌面带
@@ -359,6 +393,8 @@ class DesktopWindow(QWidget):
     def hide_desktop(self):
         # M5：隐藏整理窗口前先收好文件夹弹窗与幕布（否则两者留在屏幕上）
         self._close_popup()
+        # v15f：先撤意图位再 hide，否则守护下一轮就把窗口又拉回来了
+        self._want_visible = False
         self.hide()
         # 隐藏整理窗口时恢复原生图标：用户要回自己的桌面时不能什么都没有
         if not self._attach_known_failed:

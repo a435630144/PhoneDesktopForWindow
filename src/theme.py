@@ -91,6 +91,11 @@ GLASS_BORDER = 52            # 玻璃描边 alpha
 
 # ---------- 字体 ----------
 FONT_FAMILIES = ["Microsoft YaHei UI", "Segoe UI", "Microsoft YaHei"]
+# 图标标签专用（v15f）：Windows 桌面标签就是 **Segoe UI 9pt**，把 Segoe 放
+# 第一位，西文用它、中文自动回退雅黑——这正是资源管理器/桌面的取字方式。
+# 用雅黑打头的 FONT_FAMILIES 画标签时，拉丁字形会比系统宽一档、重一档，
+# 用户看到的就是"字体还是不对、不像原版"。
+LABEL_FONT_FAMILIES = ["Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei"]
 
 # ---------- DPI ----------
 _DPR_CACHE = None
@@ -124,6 +129,22 @@ def ui_font(pixel_size: int, bold: bool = False) -> QFont:
     f.setFamilies(FONT_FAMILIES)
     f.setPixelSize(pixel_size)
     f.setBold(bold)
+    return f
+
+
+def label_font(pixel_size: int, bold: bool = False) -> QFont:
+    """桌面图标标签字体（v15f：复刻 Windows —— Segoe UI 优先 + 中文回退）。
+
+    两个细节按系统桌面校准：
+    - 字距 100%（Qt 默认按字体自身的 kerning；雅黑的 PercentageSpacing
+      会被某些路径改成 105%，视觉上"字被拉开了"，这里显式钉死）；
+    - 不做 stylistic 加粗——`bold=True` 只在用户主动开「加粗」时生效。
+    """
+    f = QFont()
+    f.setFamilies(LABEL_FONT_FAMILIES)
+    f.setPixelSize(pixel_size)
+    f.setBold(bold)
+    f.setLetterSpacing(QFont.PercentageSpacing, 100.0)
     return f
 
 

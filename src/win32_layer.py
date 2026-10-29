@@ -376,6 +376,35 @@ def restore_band_windows(items, progman: int = 0, zorder=None) -> int:
     return restored
 
 
+def window_visible(hwnd: int) -> bool:
+    """原生窗口此刻是否真的可见（`IsWindowVisible`，不听 Qt 的缓存状态）。
+
+    v15f：`QWidget.isVisible()` 是 Qt 自己的状态位，窗口被**外部**用
+    `ShowWindow(SW_HIDE)` 藏起来时它不会同步（系统"显示桌面"、第三方
+    桌面整理都这么干）。判断"要不要拉回来"必须问 Win32。
+    """
+    try:
+        return bool(hwnd) and bool(_user32.IsWindowVisible(int(hwnd)))
+    except Exception:      # noqa: BLE001
+        return False
+
+
+def show_no_activate(hwnd: int) -> bool:
+    """强制显示窗口且不抢焦点；返回操作后是否真可见。
+
+    `SW_SHOWNA` = show no activate：桌面带窗口永远不该被激活（否则会抢走
+    用户当前应用的输入焦点）。
+    """
+    try:
+        hwnd = int(hwnd)
+        if not hwnd or not _user32.IsWindow(hwnd):
+            return False
+        _user32.ShowWindow(hwnd, SW_SHOWNA)
+        return window_visible(hwnd)
+    except Exception:      # noqa: BLE001
+        return False
+
+
 def attach_to_desktop(widget, below_hwnd: int = 0, layer: int = 0) -> bool:
     """把 Qt 窗口放入桌面带（壁纸之上、应用窗口之下）。
 

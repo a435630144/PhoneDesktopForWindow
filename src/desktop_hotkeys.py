@@ -46,12 +46,25 @@ WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
 
+VK_SHIFT = 0x10
 VK_CONTROL = 0x11
+VK_MENU = 0x12        # Alt
+VK_LWIN = 0x5B
+VK_RWIN = 0x5C
 VK_C = 0x43
 VK_V = 0x56
 VK_A = 0x41
 VK_Z = 0x5A
 VK_DELETE = 0x2E
+
+# 除 Ctrl 之外的修饰键：**只要有一个按着就不接管**（v15f）
+#
+# 用户报 BUG：「我要截图 ctrl+alt+a，无法使用，触发了 ctrl+a 全选图标」。
+# 旧实现只看 Ctrl 是否按下，于是 Ctrl+Alt+A 的 vkCode 是 'A' + ctrl=True——
+# 判定成立 → 吞键 + 全选，第三方截图工具的全局热键永远收不到。
+# 桌面自己的组合只有「无修饰」和「Ctrl+单键」两种，其余一律放行：
+# 多吞一个键的代价是用户在别的软件里少一个快捷键，这比漏一次严重得多。
+BLOCKING_MODIFIERS = (VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN)
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -157,6 +170,25 @@ def ctrl_down() -> bool:
         return bool(_user32().GetAsyncKeyState(VK_CONTROL) & 0x8000)
     except Exception:      # noqa: BLE001
         return False
+
+
+def blocking_modifier_down() -> bool:
+    """Alt / Shift / Win 是否有按下的（有则整次按键与我们无关）。
+
+    `GetAsyncKeyState` 的 0x8000 位 = 当前按下；钩子回调发生在按键"落下"的
+    同一次投递里，此刻 Alt 已经置位，所以能可靠判出 Ctrl+Alt+A。
+    """
+    try:
+        u = _user32()
+    except Exception:      # noqa: BLE001
+        return False
+    for vk in BLOCKING_MODIFIERS:
+        try:
+            if u.GetAsyncKeyState(vk) & 0x8000:
+                return True
+        except Exception:      # noqa: BLE001
+            continue
+    return False
 
 
 def pointer_on_desktop(own_hwnds: Iterable[int] = ()) -> bool:
@@ -289,6 +321,11 @@ class DesktopHotkeys(QObject):
         """
         ctrl = ctrl_down()
         vk = int(vk) or self._pressed_vk()
+        # v15f：Ctrl+Alt/Shift/Win 组合一律放行——桌面快捷键只有
+        # 「Ctrl+单键」和「无修饰 Delete」两种形态。用户报的
+        # 「Ctrl+Alt+A 触发全选、截图工具用不了」就是漏了这一层。
+        if blocking_modifier_down():
+            return False
         if ctrl:
             if vk not in (VK_C, VK_V, VK_A, VK_Z):
                 return False

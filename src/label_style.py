@@ -269,15 +269,17 @@ def draw_label_text(p: QPainter, rect, flags, text: str, style: LabelStyle,
     """
     if not text:
         return
-    p.setFont(theme.ui_font(font_px, bold=style.bold))
+    # v15f：标签走 label_font（Segoe UI 优先）——系统桌面就是这套字形，
+    # 用雅黑打头会把西文画宽一圈、看起来"不像原版"。
+    p.setFont(theme.label_font(font_px, bold=style.bold))
     if style.shadow:
-        # 原生观感 = 四向暗晕 + 下方加深（用户把系统原生标签与本项目
-        # 逐像素对比的结论）：先以约 55% 浓度在上下左右各偏移 1px 画
-        # 一圈收敛的暗晕，再以全浓度向 (+1,+1) 画主阴影——单一偏移
-        # 阴影无论怎么调 alpha 都出不了这种"刻"进壁纸的立体感
+        # 原生观感 = 一圈很淡的暗晕 + 一道 (+1,+1) 主阴影。
+        # v15f：晕的浓度从 0.55 降到 0.30——0.55 时四周那圈黑把字形"喂胖"
+        # 了一圈，用户对比系统桌面时看到的就是"字体不对/笔画太粗"。
+        # 主阴影保持全浓度，保证浅色壁纸上依然读得清。
         alpha = max(0.0, min(1.0, style.shadow_alpha))
         halo = QColor(style.shadow_color)
-        halo.setAlphaF(alpha * 0.55)
+        halo.setAlphaF(alpha * 0.30)
         p.setPen(halo)
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             p.drawText(rect.adjusted(dx, dy, dx, dy), flags, text)

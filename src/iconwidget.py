@@ -48,6 +48,70 @@ from .storage import entry_app
 
 MIME_TYPE = "application/x-desktoporg-item"
 
+# 资源管理器原生菜单里"值得常驻"的动词（v15f，用户反馈右键菜单占满一屏）。
+# 比对的是**去掉快捷键标注后的整词**：「复制(C)」-> 复制 命中，
+# 「复制文件地址(A)」-> 复制文件地址 不命中（它是诊断类操作，进折叠区）。
+# 英文系统给的是 "Cut"/"Copy"/"Delete"/"Rename"/"Properties"/"Open with"，
+# 同样常驻；匹配时对 ASCII 忽略大小写（见 `_verb_inline`）。
+_INLINE_VERBS = ("剪切", "复制", "删除", "重命名", "属性", "打开方式",
+                 "cut", "copy", "delete", "rename", "properties",
+                 "open with")
+
+
+def _verb_inline(name: str) -> bool:
+    low = str(name or "").strip().lower()
+    return any(low == v or name == v for v in _INLINE_VERBS)
+
+
+def _verb_name(label: str) -> str:
+    """菜单项文字 -> 去掉尾部「(X)」快捷键标注的整词。"""
+    text = str(label or "").strip()
+    if text.endswith(")") and "(" in text:
+        head, _sep, _tail = text.rpartition("(")
+        # 只有括号里是 1~3 个字符时才当快捷键标注（避免误伤「图片(RAW)」）
+        if 0 < len(_tail[:-1]) <= 3:
+            return head.strip()
+    return text
+
+
+def split_native_nodes(nodes):
+    """把原生菜单节点树拆成（常驻, 折叠）两段（v15f）。
+
+    - 顶层节点按 `_INLINE_VERBS` 整词匹配：常见动词留在外面，其余折叠；
+    - 子菜单**整体跟随父节点**（「打开方式」的子项当然要跟着它一起常驻）；
+    - 分隔线只在"两侧都有内容"的位置保留，避免出现连续空行。
+
+    纯函数（只吃 list、只吐 list），单测直接构造节点树断言。
+    """
+    primary, rest = [], []
+    for node in nodes or []:
+        if node.get("sep"):
+            # 分隔线交给两段各自收尾时清理，先原样保留
+            primary.append(node) if not rest else rest.append(node)
+            continue
+        name = _verb_name(node.get("label"))
+        if name == "打开":
+            continue          # 顶部已有「打开」，镜像里这条永远不显示，直接丢掉
+        target = primary if _verb_inline(name) else rest
+        target.append(node)
+    return (_trim_seps(primary), _trim_seps(rest))
+
+
+def _trim_seps(nodes):
+    """去掉首尾分隔线以及连续分隔线（菜单视觉整洁）。"""
+    out = []
+    for node in nodes:
+        if node.get("sep"):
+            if not out or out[-1].get("sep"):
+                continue
+            out.append(node)
+            continue
+        out.append(node)
+    while out and out[-1].get("sep"):
+        out.pop()
+    return out
+
+
 
 def _cursor_pos() -> QPoint:
     """当前光标的全局坐标。
@@ -872,8 +936,8 @@ class AppIcon(QWidget):
         if self._compact:
             # 文件夹成员：图标正下方一行小字（居中 + 末尾省略），
             # 与图标同一列宽，长文件名不会溢出到邻格（反馈 7）
-            font = theme.ui_font(self._label_font_px,
-                                 bold=self._label_style.bold)
+            font = theme.label_font(self._label_font_px,
+                                    bold=self._label_style.bold)
             fm = QFontMetrics(font)
             rect = QRect(self._box_x, 2 + self.icon_size,
                          max(1, self.width() - self._box_x * 2),
@@ -906,7 +970,8 @@ class AppIcon(QWidget):
         矩形裁掉（hover 高亮框正好画在同一条边界上，看起来就是"被框裁剪"）。
         现在行数只由**当前真实行高与可用高度**决定，宁可少一行也不越界。
         """
-        font = theme.ui_font(self._label_font_px, bold=self._label_style.bold)
+        font = theme.label_font(self._label_font_px,
+                                bold=self._label_style.bold)
         fm = QFontMetrics(font)
         lh = max(1, min(fm.height() + 1, band.height()))
         room = max(1, band.height() // lh)
@@ -2087,7 +2152,28 @@ class AppIcon(QWidget):
             return
 
     def _build_native_menu(self, menu, nodes, invoker):
-        """把 native_menu 的节点树镜像进 QMenu（保留分隔线与子菜单）。"""
+        """把 native_menu 的节点树镜像进 QMenu（**折叠成两层**）。
+
+        用户反馈（2026-10-29）：「有的软件文件的右键展开太详细了，展开之后
+        直接占了一个屏幕，想办法折叠一下，只常驻几个重要常用的」——资源
+        管理器那份菜单里有云盘上传、同步、第三方工具、压缩包命令等几十项，
+        逐条铺到我们的菜单里就是一屏。
+
+        现在只把 Windows 自身的常用动词留在外面（见 `_INLINE_VERBS`），
+        其余原样（含分隔线与子菜单）收进「更多系统操作」子菜单：功能一个
+        不少，展开层级从 1 屏变成 1 层。
+        """
+        primary, rest = split_native_nodes(nodes)
+        self._append_native_nodes(menu, primary, invoker)
+        if rest:
+            menu.addSeparator()
+            sub = menu.addMenu("更多系统操作")
+            # 子菜单是 Python 所有：不持引用会被 GC（DEVLOG 坑 #39）
+            self._ctx_submenus.append(sub)
+            self._append_native_nodes(sub, rest, invoker)
+
+    def _append_native_nodes(self, menu, nodes, invoker):
+        """按原顺序把节点树追加进菜单（不做折叠，供折叠后的两段复用）。"""
         for node in nodes:
             if node["sep"]:
                 menu.addSeparator()
@@ -2097,7 +2183,8 @@ class AppIcon(QWidget):
                 continue
             if node["children"] is not None:
                 sub = menu.addMenu(label)
-                self._build_native_menu(sub, node["children"], invoker)
+                self._ctx_submenus.append(sub)
+                self._append_native_nodes(sub, node["children"], invoker)
                 if sub.isEmpty():
                     sub.menuAction().setVisible(False)
                 continue

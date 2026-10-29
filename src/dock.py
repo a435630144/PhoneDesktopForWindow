@@ -1055,7 +1055,16 @@ class DockWindow(QWidget):
         p.setFont(f)
         p.drawText(rect, Qt.AlignCenter, "拖入应用")
 
-    def _paint_item(self, p, i, dpr):
+    def _target_rect(self, i):
+        """第 i 个图标的绘制矩形 + 边长（**唯一**几何入口，v15f）。
+
+        hover 放大、相邻让位、越界夹紧三步都在这里算完；`_paint_item` 与
+        判据（`tests/test_audit_v15f.py`）共用同一份结果，避免"测试算的
+        和画的不是一回事"。
+
+        返回 (QRect, size)：size 是给 `icon_pixmap` 的请求边长（量化到 2px，
+        否则 hover 动画每帧都会产生新的 pixmap 缓存键）。
+        """
         m = self._m
         x, y, w, h = item_rect(self._bar, self._position, m, i)
         # 条带可能比窗口本身偏移（窗口就是条带，故相对坐标减 bar 原点）
@@ -1067,9 +1076,9 @@ class DockWindow(QWidget):
             grow = self._hover_grow()
             # v14 反馈 5：iOS 的放大是"抬起"——图标往上飘出 Shelf 一点，
             # 不是原地胀大。抬升量取放大增量的一半（视觉上仍以放大为主）。
-            lift = grow * 0.5
-        # 尺寸量化到 2px 步进：hover 动画每帧都会变，不量化会让
-        # `appsource.icon_pixmap` 的 size 缓存键爆炸（每帧新建 pixmap）
+            # v15f：只有贴下边 / 贴左边的条带能往外飘（那是屏幕内的方向）；
+            # 贴上边 / 贴右边的条带抬升方向正好在窗口外，直接给 0。
+            lift = grow * 0.5 if self._position in ("bottom", "left") else 0.0
         size = max(16, int(round((m.icon + grow) / 2.0)) * 2)
         shift = self._spread(i)
         horizontal = self._position in ("bottom", "top")
@@ -1079,7 +1088,18 @@ class DockWindow(QWidget):
         else:
             cx = lx + m.icon // 2 - lift
             cy = ly + m.icon // 2 + shift
-        target = QRect(int(cx - size // 2), int(cy - size // 2), size, size)
+        return self._clamp_into_bar(
+            QRect(int(cx - size // 2), int(cy - size // 2), size, size)), size
+
+    def _paint_item(self, p, i, dpr):
+        m = self._m
+        target, size = self._target_rect(i)
+        cx = target.center().x()
+        cy = target.center().y()
+        horizontal = self._position in ("bottom", "top")
+        # 槽位原点（未受 hover 影响）：hover 小圆点按**槽位**落，不跟着图标飘
+        _sx, _sy, _sw, _sh = item_rect(self._bar, self._position, m, i)
+        lx, ly = _sx - self._bar[0], _sy - self._bar[1]
 
         dropping_out = (self._drag_out and i == self._drag_index)
         if dropping_out:
@@ -1104,6 +1124,35 @@ class DockWindow(QWidget):
             else:
                 p.drawEllipse(QPoint(lx + m.icon + m.pad_r // 2, cy), dot, dot)
             p.setBrush(Qt.NoBrush)
+
+    def _clamp_into_bar(self, rect):
+        """把图标矩形夹进窗口（= 条带）内，避免被窗户边缘裁掉。
+
+        用户反馈（2026-10-29）：「dock 栏图标会被 dock 栏的边框侧切」。
+        根因不是画错位置，而是**窗口就是条带**：hover 放大让图标向外胀、
+        相邻让位把两端图标往外推，任何超出窗口的部分都会被 Windows 直接
+        裁掉，看起来就是被边框切了一刀（缩小内边距时尤其明显）。
+
+        夹的是**位置**不是尺寸：放大效果保留，只是贴边时整体往里挪几像素。
+        边框宽度也算进去——粗描边时图标不该压在描边上。
+        """
+        bw = 0
+        try:
+            bw = max(0, int(round(border_width(self.storage))))
+        except Exception:      # noqa: BLE001
+            bw = 0
+        inset = bw + 1
+        w, h = self.width(), self.height()
+        rw, rh = rect.width(), rect.height()
+        if rw >= w or rh >= h:          # 窗口太小（异常尺寸）：居中保底
+            return QRect((w - rw) // 2, (h - rh) // 2, rw, rh)
+        # 内缩后放不下（hover 放大 + 小内边距，图标比"条带 - 边框"还高）时
+        # 直接居中：宁可压着描边，也不能让窗口边缘切掉一块。
+        x = ((w - rw) // 2 if rw > w - inset * 2
+             else max(inset, min(rect.x(), w - inset - rw)))
+        y = ((h - rh) // 2 if rh > h - inset * 2
+             else max(inset, min(rect.y(), h - inset - rh)))
+        return QRect(x, y, rw, rh)
 
     def _paint_fallback(self, p, rect, item):
         """取不到图标时的字母占位（与图标层同一套观感）。"""

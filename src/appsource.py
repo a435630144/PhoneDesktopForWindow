@@ -448,20 +448,22 @@ def shortcut_target_path(app: dict):
 
 
 def shortcut_icon_source(app: dict):
-    """.url 文件内部 IconFile / IconIndex 指定的图标（返回 (路径, 序号) / None）。
+    """快捷方式**自己带的**图标资源（返回 (路径, 序号) / None）。
 
-    2026-10-19 用户反馈："雀魂麻将 和 异形工厂2 的图标丢失图像、变成空白"。
-    这两个都是 Steam 的 `.url`：
-        [InternetShortcut]
-        URL=steam://rungameid/1329410
-        IconFile=D:\\...\\Steam\\steam\\games\\<hash>.ico
-        IconIndex=0
-    壳层对 `.url` 只会给一张通用"链接"白页图，看着就像空白图标；真实图标
-    写在 IconFile 里（Steam 把游戏图标缓存成 .ico）。这里先解析出来再取。
+    - `.url`：读文件里的 IconFile / IconIndex（Steam 把游戏图标缓存成
+      .ico，壳层对 .url 只会给一张通用"链接"白页图）。
+    - `.lnk`（v15f）：走 IShellLink::GetIconLocation。用户反馈「VALORANT
+      图标的样式不对」——它的快捷方式 target 也是 RiotClientServices.exe，
+      但 IconLocation 指向自己的图标；旧实现一律改读 target，于是 VALORANT
+      和 Riot Client 显示成同一张图。
+
     IconIndex 不为 0 时 QIcon 无法按序号取，交由调用方回退壳层。
     """
     p = app.get("icon_path") or app.get("target") or ""
-    if not p.lower().endswith(".url"):
+    low = p.lower()
+    if low.endswith(".lnk"):
+        return _lnk_icon_source(p)
+    if not low.endswith(".url"):
         return None
     text = _read_shortcut_text(p)
     if not text:
@@ -483,6 +485,39 @@ def shortcut_icon_source(app: dict):
     if not icon_file:
         return None
     return (_expand(os.path.expandvars(icon_file)), index)
+
+
+def _lnk_icon_source(path: str):
+    """`.lnk` 的 IconLocation（pywin32 不可用 / 解析失败一律 None）。"""
+    try:
+        import pythoncom
+        from win32com.shell import shell
+    except Exception:      # noqa: BLE001 —— 没有 pywin32 就退回旧行为
+        return None
+    try:
+        # 图标可能在工作线程里取（缩略图/预取）：那个线程未必初始化过 COM。
+        # 主线程里重复调用是幂等的，失败（已经是 MTA）也不影响后面尝试。
+        pythoncom.CoInitialize()
+    except Exception:      # noqa: BLE001
+        pass
+    try:
+        link = pythoncom.CoCreateInstance(
+            shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER,
+            shell.IID_IShellLink)
+        link.QueryInterface(pythoncom.IID_IPersistFile).Load(path)
+        icon_path, index = link.GetIconLocation()
+    except Exception:      # noqa: BLE001
+        return None
+    if not icon_path:
+        return None
+    icon_path = _expand(os.path.expandvars(str(icon_path)))
+    if not _path_exists(icon_path):
+        return None
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        index = 0
+    return (icon_path, index)
 
 
 def _read_shortcut_text(path: str) -> str:
@@ -528,18 +563,27 @@ def _qicon_for(app: dict) -> QIcon:
             return _ICON_CACHE[key]
         # 图坏了/文件不在：往下走 shell 分支，至少还能拿到文件类型图标
     if is_shortcut(app):
-        if path.lower().endswith(".url"):
-            spec = shortcut_icon_source(app)
-            if spec and spec[1] == 0 and spec[0] and _path_exists(spec[0]):
-                # IconFile 本身就是图标资源（Steam 的 .ico）：直接加载能拿到
-                # 全部内嵌尺寸（16..256），比绕壳层再缩放清晰得多
-                key = (spec[0],)
-                if key not in _ICON_CACHE:
-                    ic = QIcon(spec[0])
-                    _ICON_CACHE[key] = ic
-                if not _ICON_CACHE[key].isNull():
-                    return _ICON_CACHE[key]
-                path = spec[0]
+        spec = shortcut_icon_source(app)         # .lnk / .url 的自定义图标
+        if (spec and spec[1] == 0 and spec[0] and _path_exists(spec[0])
+                and str(spec[0]).lower().endswith(_IMAGE_SUFFIXES)):
+            # IconFile 本身就是图标资源（Steam 的 .ico、VALORANT 的 .ico）：
+            # 直接加载能拿到全部内嵌尺寸（16..256），比绕壳层再缩放清晰得多
+            key = (spec[0],)
+            if key not in _ICON_CACHE:
+                ic = QIcon(spec[0])
+                _ICON_CACHE[key] = ic
+            if not _ICON_CACHE[key].isNull():
+                return _ICON_CACHE[key]
+            path = spec[0]
+        elif path.lower().endswith(".url"):
+            # IconFile 不存在 / IconIndex≠0：**保持 .url 本身**走壳层
+            # （test_shortcut_icon C5 锁的死行为——拿一个不存在的图标路径
+            # 去问壳层只会得到空白图）
+            pass
+        elif spec and spec[1] == 0:
+            # .lnk 指向的宿主（exe/dll）第一个图标：序号 > 0 时 QIcon 取不了，
+            # 回退 target——宁可退回旧观感，也不要拿错图标
+            path = spec[0]
         else:
             tgt = shortcut_target_path(app)
             if tgt:

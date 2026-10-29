@@ -213,7 +213,11 @@ class BandGuard(QObject):
                 # topmost 带，插其下方仍被全屏壁纸盖住）。全程不激活，
                 # 键盘输入仍归用户当前应用。
                 self._in_show_desktop = True
-                win32_layer.restore_band_windows(self._items, progman)
+                # v15f：只恢复"自己要显示"的成员——用户在托盘里关掉的桌面
+                # 不能因为按了 Win+D 又自己冒出来
+                win32_layer.restore_band_windows(
+                    [(h, ly) for h, ly in self._items
+                     if self._should_be_visible(h)], progman)
                 self._tick_hook()
                 return
             if self._in_show_desktop:
@@ -230,10 +234,63 @@ class BandGuard(QObject):
             if fg and fg in [h for h, _ in self._items]:
                 self._tick_hook()
                 return
+            # v15f：先无条件查一遍"本该可见却不可见"（见方法注释）
+            self._restore_hidden_windows()
             win32_layer.enforce_band_order(progman, wins)
             self._tick_hook()
         except Exception:
             return
+
+    def _should_be_visible(self, hwnd) -> bool:
+        """这个窗口"此刻该不该可见"（v15f）。
+
+        - 桌面窗口带 `_want_visible` 意图位：托盘隐藏时它是 False，任何
+          "显示桌面"恢复 / 守护拉回都必须尊重它（否则用户关掉的桌面会被
+          Win+D 弄回来）。
+        - 没有意图位的窗口（组件 / 幕布 / 文件夹弹窗）：**跟随它此刻的
+          真实可见性**——这些是短命 UI，自己会 hide 自己，不能因为一次
+          守护轮询就把刚收起来的弹窗又弹出来。
+        """
+        ref = self._widgets.get(hwnd)
+        widget = ref() if ref is not None else None
+        if widget is None:
+            return True
+        want = getattr(widget, "_want_visible", None)
+        if want is not None:
+            return bool(want)
+        return win32_layer.window_visible(hwnd)
+
+    def _restore_hidden_windows(self) -> int:
+        """受护窗口被**外部**藏起来时，主动恢复可见（v15f）。
+
+        用户反馈（2026-10-29）：「使用系统层级的显示桌面的时候还是会导致被
+        隐藏，并且隐藏的时候在托盘关闭程序，再打开会出现再也无法显示的 BUG」。
+
+        旧实现只认「Progman 进入 topmost 带」这一种"显示桌面"形态，Win11
+        新版 shell / 部分桌面整理软件并不置那个位；漏判之后窗口就停在
+        `WS_VISIBLE=0`，而 Qt 侧 `isVisible()` 仍是 True——`show()` 变成
+        空操作，用户只能重启 explorer 才回得来（"再也无法显示"）。
+
+        判据只认 Win32 + 窗口自己的意图位：组件、弹窗这些短命窗口没有
+        `_want_visible`，一律不碰；桌面窗口只有在自己要显示时才认。
+        """
+        fixed = 0
+        for hwnd, layer in list(self._items):
+            ref = self._widgets.get(hwnd)
+            widget = ref() if ref is not None else None
+            if widget is None or not getattr(widget, "_want_visible", False):
+                continue
+            try:
+                if win32_layer.window_visible(hwnd):
+                    continue
+                if not win32_layer.show_no_activate(hwnd):
+                    continue
+                # 刚被拉回来的窗口 z-order 不可信：按层号重插桌面带
+                attach_to_desktop(widget, layer=layer)
+                fixed += 1
+            except Exception:      # noqa: BLE001 —— 单个窗口失败不影响其它
+                continue
+        return fixed
 
     def _tick_hook(self):
         if self._on_tick is None:
