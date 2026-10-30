@@ -261,9 +261,16 @@ class AddAppsForm(FolderForm):
 
     # ---------- 度量 ----------
     def _cell(self):
+        """(图标边长, 格宽, 格高)。
+
+        v15i：格高必须容得下"图标 + 间距 + 两行名字"。旧实现写死
+        `58 * m`，而 100% 缩放下内容需要 `36 + 5 + 13*2 = 67`——下一行
+        图标（后画）把上一行名字的第二行压掉半截；125% 仍溢出 3px。
+        """
         m = self.m()
         icon = max(30, int(round(36 * m)))
-        return icon, int(round(64 * m)), int(round(58 * m))
+        need = icon + 5 + 13 * 2 + 4          # 图标 / 间距 / 两行 / 下边距
+        return icon, int(round(64 * m)), max(int(round(58 * m)), need)
 
     def _rows(self):
         n = len(self._cands)

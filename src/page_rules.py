@@ -24,6 +24,16 @@ INHERIT = ""            # 空 = 跟随全局
 MODE_LABELS = ((INHERIT, "跟随全局"), (AUTO, "自动排列"), (FREE, "自由摆放"))
 
 
+def label_key(value: str) -> str:
+    """下拉项对应的 i18n 键（唯一拼法入口）。
+
+    `INHERIT` 是**空串**（存储里就写 ""），直接拼 `"page_rules." + value`
+    会得到 `"page_rules."`——词表里没有这个键，英文界面就漏出中文兜底
+    （v15g）。以后再加模式，也只改这里。
+    """
+    return "page_rules." + (value or "inherit")
+
+
 def custom_enabled(storage) -> bool:
     """是否启用了"每页单独设置"。"""
     return bool(storage.get_setting("page_rules_custom"))

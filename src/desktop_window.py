@@ -2527,8 +2527,17 @@ class DesktopWindow(QWidget):
             if icon is None or entry is None:
                 continue
             self._multi_origin[eid] = icon.pos()
-            cols.append(int(entry.get("col", 0) or 0))
-            rows.append(int(entry.get("row", 0) or 0))
+            c = int(entry.get("col", 0) or 0)
+            r = int(entry.get("row", 0) or 0)
+            cols.append(c)
+            rows.append(r)
+            # v15h：2×2 大文件夹按**真实占位**多算一格。只记主格时，
+            # 拖到最右列/页底的夹紧按"主格不能出界"算，瓷砖的右/下半
+            # 先飞出网格，松手又被 `multi_move`（按 footprint 夹）拉回
+            # 一格——用户看到"拖出页外又弹回来"。
+            if grid_flow.is_big_folder(self.storage, entry):
+                cols.append(c + 1)
+                rows.append(r + 1)
         self._multi_box = ((min(cols), max(cols), min(rows), max(rows))
                            if cols and rows else None)
         # 翻页会让整块换载体（页偏移由翻页系统统一施加），那时像素跟随
@@ -2725,12 +2734,24 @@ class DesktopWindow(QWidget):
     def _extract_landing_cell(self, cell):
         """成员拖出的**实际落点**（与 `_on_extract` 同一规则）。
 
-        目标格空 -> 就落目标格；被占 -> `storage.first_free_cell()`
-        （`add_app` 用的就是它，不另写一份扫描——两套规则必然漂移）。
+        目标格空 -> 就落目标格；被占（或是 Dock 禁放格）-> 当前页第一个
+        空格，页内也满才退回全局。
+
+        与 `_on_extract` 必须同源：那里是 `first_free_cell_in_page(_page)`，
+        旧实现这里却用 `storage.first_free_cell()`（从 (0,0) 全局扫）——
+        在第 2 页以后拖成员的落点提示框会算到第 1 页，按页偏移画出去就是
+        屏幕外，用户看不到红框、松手却落在别处。v15h
         """
         col, row = int(cell[0]), int(cell[1])
-        if self.storage.occupant(col, row) is not None:
-            free = self.storage.first_free_cell()
+        if (self.storage.occupant(col, row) is not None
+                or (col, row) in self.storage._side_blocked()):
+            free = None
+            try:
+                free = grid_flow.first_free_cell_in_page(self.storage, self._page)
+            except Exception:        # noqa: BLE001 —— 无界模式 / 早期构造
+                free = None
+            if free is None:
+                free = self.storage.first_free_cell()
             if free is not None:
                 col, row = int(free[0]), int(free[1])
         return (col, row)
@@ -2807,6 +2828,26 @@ class DesktopWindow(QWidget):
         if moved:
             self.storage.save()
             self._animate_icons_to_layout(moved)
+            # v15h：页满时 `displace_cells` 会把图标顺延到**下一页的行**
+            # （`next_col >= cols -> extra_row + 1`）。不按落点页收编的话
+            # 这些图标 `isHidden()` 仍是 False，而 `_select_all` 用
+            # "没被隐藏"当"当前页可见"的判据——Ctrl+A + Delete 就会删掉
+            # 用户完全看不见的条目（开了回收站还会把真实文件送进去）。
+            self._cull_moved_icons(moved)
+
+    def _cell_blocked_by(self, entry, cell, comp_cells) -> bool:
+        """该图标是否被组件占位压住（大文件夹按 4 格**整块**判）。
+
+        v15h：旧实现只比主格。组件落在 2×2 瓷砖的右/下半边时被判定为
+        "没压到"，瓷砖不挪、组件压上去，而 `_enlarge_big_folder` 又明确
+        拒绝"四格里有组件"——两边规则相反，结果就是瓷砖右下两格里的
+        成员永远点不到（组件顶层窗口挡着）。整块让位才能保住 2×2 不被拆散。
+        """
+        if cell in comp_cells:
+            return True
+        if grid_flow.is_big_folder(self.storage, entry):
+            return bool(set(grid_flow.big_block_cells(cell)) & comp_cells)
+        return False
 
     def _displace_blocked(self, comp_cells, src_cells) -> set:
         """挤位禁区：组件占位 ∪ 其他图标占位（排除本次要挪走的那些）。
@@ -2840,7 +2881,7 @@ class DesktopWindow(QWidget):
         need = []
         for e in self.storage.layout:
             cell = (int(e.get("col", 0)), int(e.get("row", 0)))
-            if cell in wc:
+            if self._cell_blocked_by(e, cell, wc):
                 need.append((e, cell))
         # 2026-10-20 F2：禁区补上其他图标占位，否则被挤的图标会被分到
         # 已经站着人的格子上（预览/落定都叠）
@@ -2919,7 +2960,7 @@ class DesktopWindow(QWidget):
         need = []
         for e in self.storage.layout:
             c, r = int(e.get("col", 0)), int(e.get("row", 0))
-            if (c, r) in comp_blocked:
+            if self._cell_blocked_by(e, (c, r), comp_blocked):
                 need.append((e, (c, r)))
         # 2026-10-20 F2：禁区再补「其他图标占位」——只给组件占位时
         # displace_cells 会把图标分到别人正占着的格上（预览直接叠格）
@@ -3484,6 +3525,13 @@ class DesktopWindow(QWidget):
             host = self.storage.find_entry((self._popup.entry or {}).get("id"))
             if host is None or host.get("type") != "folder":
                 self._close_popup()
+            else:
+                # v15i：**存活**的文件夹也可能少成员——`prune_dead_members()`
+                # 就地改 `entry["apps"]`，而弹窗的成员控件是上一次 `_build`
+                # 的快照、拖拽 payload 用成员**下标**（`M:<fid>:<i>`）。
+                # 不重建就会"点第 1 个图标启动第 2 个应用"、右键移出把
+                # 别的成员弹回桌面、最后一个图标变成无响应的死按钮。
+                self._popup.refresh()
         self._sync_structure()
         self._cull_page_icons()
         self.storage.save()
@@ -3536,9 +3584,21 @@ class DesktopWindow(QWidget):
         entry = self.storage.find_entry(entry_id)
         if not entry or entry.get("type") != "folder":
             return
-        for app in entry.get("apps", []):
-            self.storage.add_app(app)
+        from . import grid_flow
+        page = grid_flow.entry_page(self.storage, entry)
+        apps = list(entry.get("apps", []))
+        # v15h：先移除容器、再按**同一页**放成员。旧实现先 `add_app(app)`
+        # （无落点 -> `first_free_cell()` 从 (0,0) 全局扫）再 remove，
+        # 于是在第 2 页以后右键「解散文件夹」时，成员全被扔到第 1 页，
+        # 用户看到的是"文件夹一解散，里面的应用就没了"（要翻回第 1 页
+        # 才能找到）。先移除还能让成员占回文件夹原格，视觉连续。
         self.storage.remove_entry(entry_id)
+        for app in apps:
+            slot = grid_flow.first_free_cell_in_page(self.storage, page)
+            if slot is None:
+                self.storage.add_app(app)
+            else:
+                self.storage.add_app(app, int(slot[0]), int(slot[1]))
         self.storage.compact_layout()
         self.storage.save()
         self._sync_structure()          # M4：成员增量淡入 + 文件夹图标移除

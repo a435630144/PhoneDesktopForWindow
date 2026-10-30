@@ -190,12 +190,14 @@ class SettingsDialog(QDialog):
         self.setMinimumSize(600, 560)
         self._nav_buttons = []
         self._pages = {}
-        # Dock 外观滑条的落盘去抖（v10 反馈 27）：拖滑条时每个像素都会
-        # 写设置，若同步 save() 就是"每帧一次磁盘 IO + 全量重建图标"，
-        # 主线程直接被拖死（用户实测卡到崩溃）。250ms 合并成一次写盘。
-        self._dock_save_timer = QTimer(self)
-        self._dock_save_timer.setSingleShot(True)
-        self._dock_save_timer.timeout.connect(self._flush_storage)
+        # 连续输入（滑条 / 步进器长按）的统一落盘节流（v10 反馈 27，
+        # v15g 泛化）：写设置走 `set_setting(..., save=False)` 只改内存，
+        # 250ms 合并成一次写盘。以前每次 set_setting 内部都同步
+        # save()（临时文件 + fsync + replace），节流器只是空转地再写一遍，
+        # 拖滑条时每像素一次全量磁盘 IO，主线程被拖住。
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._flush_storage)
         self._build()
         if page:
             self.select_page(page)
@@ -647,6 +649,17 @@ class SettingsDialog(QDialog):
         except Exception:      # noqa: BLE001
             pass
 
+    def hideEvent(self, event):
+        """隐藏即兜底落盘（v15g）。
+
+        连续输入控件改成 `set_setting(..., save=False)` + 250ms 去抖之后，
+        用户"拖完立刻按 Esc"会让定时器还没到点就被销毁——最后一次改动
+        只在内存里。所有关闭路径（关闭按钮 / Esc / accept / deleteLater）
+        都会先 hide，挂这里一处覆盖。
+        """
+        self._flush_storage()
+        super().hideEvent(event)
+
     def _apply_dock_liquid(self, on):
         """Dock 的液态玻璃开关（v14 反馈 10）：与背景不透明度互斥。"""
         self.storage.set_setting("liquid_dock", bool(on))
@@ -654,7 +667,14 @@ class SettingsDialog(QDialog):
         self._apply_dock_style()
 
     def _sync_dock_liquid(self, dock_on=None):
-        """液态开着 -> 不透明度置灰（值保留，关掉后回来还是原值）。"""
+        """Dock 液态的**两个**依赖态（v15g 拆开，以前混在一句里）：
+
+        * 开关本身可编辑 = Dock 开着 **且** 总闸开着。总闸关着时写了也不
+          生效，留着能点就是"无效旋钮"。
+        * 不透明度置灰 = 液态**此刻真的生效**（`surface_enabled`），不是
+          "开关亮着"。总闸关 / 开关关时条带是普通半透明，不透明度必须
+          能调——只按 checked 判会把它锁死，用户调不回来。
+        """
         chk = getattr(self, "chk_dock_liquid", None)
         sld = getattr(self, "sld_dock_alpha", None)
         if chk is None or sld is None:
@@ -662,7 +682,10 @@ class SettingsDialog(QDialog):
         if dock_on is None:
             box = getattr(self, "chk_dock", None)
             dock_on = bool(box.isChecked()) if box is not None else True
-        sld.setEnabled(bool(dock_on) and not bool(chk.isChecked()))
+        dock_on = bool(dock_on)
+        chk.setEnabled(dock_on and liquid_glass.master_enabled(self.storage))
+        sld.setEnabled(
+            dock_on and not liquid_glass.surface_enabled(self.storage, "dock"))
 
     def _apply_dock_style(self, *_):
         """Dock **外观**改动（透明度 / 圆角 / 边框 / hover / dot）。
@@ -672,34 +695,41 @@ class SettingsDialog(QDialog):
         重挂 + 层序归位）再 `refresh_grid()`（删掉重建全部图标 QWidget）。
         拖滑条时每像素走一次，就是用户看到的"每帧全屏重渲染"以及崩溃。
 
-        落盘走 250ms 去抖（`_dock_save_timer`），松手后写一次。
+        落盘走 250ms 去抖（`_save_timer`），松手后写一次。
+        v15g：配合 `set_setting(..., save=False)`——以前每次 `set_setting`
+        内部都同步 `save()`（临时文件 + fsync + replace），滑条每像素一次
+        全量写盘，那个 250ms 定时器只是空转地再写一遍。
         """
         ctl = lambda name: getattr(self, name, None)  # noqa: E731
         if ctl("sld_dock_alpha") is not None:
             self.storage.set_setting(
-                "dock_alpha", round(int(self.sld_dock_alpha.value()) / 100.0, 4))
+                "dock_alpha",
+                round(int(self.sld_dock_alpha.value()) / 100.0, 4), save=False)
         mode = None
         if ctl("cmb_dock_radius") is not None:
             mode = dock.normalize_radius_mode(self.cmb_dock_radius.currentData())
-            self.storage.set_setting("dock_radius_mode", mode)
+            self.storage.set_setting("dock_radius_mode", mode, save=False)
         if ctl("sld_dock_radius") is not None:
             self.storage.set_setting(
-                "dock_radius", int(self.sld_dock_radius.value()))
+                "dock_radius", int(self.sld_dock_radius.value()), save=False)
         if ctl("sld_dock_border") is not None:
             self.storage.set_setting(
-                "dock_border_width", int(self.sld_dock_border.value()))
+                "dock_border_width", int(self.sld_dock_border.value()),
+                save=False)
         if ctl("chk_dock_hover") is not None:
             self.storage.set_setting("dock_hover",
-                                     bool(self.chk_dock_hover.isChecked()))
+                                     bool(self.chk_dock_hover.isChecked()),
+                                     save=False)
         if ctl("chk_dock_dot") is not None:
             self.storage.set_setting("dock_dot",
-                                     bool(self.chk_dock_dot.isChecked()))
+                                     bool(self.chk_dock_dot.isChecked()),
+                                     save=False)
         if ctl("chk_dock_border_auto") is not None:
             self._dock_border_color = (
                 "" if self.chk_dock_border_auto.isChecked()
                 else str(getattr(self, "_dock_border_color", "") or ""))
             self.storage.set_setting("dock_border_color",
-                                     self._dock_border_color)
+                                     self._dock_border_color, save=False)
             self._sync_dock_border_btn()
         hook = getattr(self.window, "apply_dock_style", None)
         if hook is not None:
@@ -715,7 +745,7 @@ class SettingsDialog(QDialog):
                 bool(self.chk_dock.isChecked())
                 and (mode or dock.normalize_radius_mode(
                     self.storage.get_setting("dock_radius_mode"))) == "round")
-        self._dock_save_timer.start(250)
+        self._save_timer.start(250)
 
     def _apply_dock_metrics(self, *_):
         """Dock 尺寸与间距：图标大小见 `_apply_dock`（要重建图标），这里管
@@ -727,31 +757,35 @@ class SettingsDialog(QDialog):
         """
         ctl = lambda name: getattr(self, name, None)  # noqa: E731
         if ctl("sp_dock_gap") is not None:
-            self.storage.set_setting("dock_gap", int(self.sp_dock_gap.value()))
+            self.storage.set_setting("dock_gap", int(self.sp_dock_gap.value()),
+                                     save=False)
         # v12：四向内边距
         if getattr(self, "_dock_pad_steppers", None):
             for side, sp in self._dock_pad_steppers.items():
-                self.storage.set_setting("dock_pad_" + side, int(sp.value()))
+                self.storage.set_setting("dock_pad_" + side, int(sp.value()),
+                                         save=False)
         elif ctl("sp_dock_pad") is not None:
-            self.storage.set_setting("dock_pad", int(self.sp_dock_pad.value()))
+            self.storage.set_setting("dock_pad", int(self.sp_dock_pad.value()),
+                                     save=False)
         if ctl("sp_dock_hover") is not None:
             self.storage.set_setting("dock_hover_pct",
-                                     int(self.sp_dock_hover.value()))
+                                     int(self.sp_dock_hover.value()), save=False)
         # v12：屏幕位置偏移与居中
         if ctl("sp_dock_offx") is not None:
             self.storage.set_setting("dock_offset_x",
-                                     int(self.sp_dock_offx.value()))
+                                     int(self.sp_dock_offx.value()), save=False)
         if ctl("sp_dock_offy") is not None:
             self.storage.set_setting("dock_offset_y",
-                                     int(self.sp_dock_offy.value()))
+                                     int(self.sp_dock_offy.value()), save=False)
         if ctl("chk_dock_center") is not None:
             self.storage.set_setting("dock_center",
-                                     bool(self.chk_dock_center.isChecked()))
+                                     bool(self.chk_dock_center.isChecked()),
+                                     save=False)
         hook = getattr(self.window, "apply_dock_metrics", None)
         if callable(hook):
             hook(False)          # 只重排条带，不重建网格
         self._schedule_grid_refresh()
-        self._dock_save_timer.start(250)
+        self._save_timer.start(250)
 
     def _reset_dock_size(self):
         """重置尺寸与间距到出厂值（v12 反馈 35）。"""
@@ -853,53 +887,62 @@ class SettingsDialog(QDialog):
         """
         ctl = lambda name: getattr(self, name, None)  # noqa: E731
         on = bool(self.chk_dock.isChecked())
-        self.storage.set_setting("dock_enabled", on)
+        # v15g：一次 apply 会写十几个键，全部先写内存、末尾统一落盘一次。
+        # 逐个 save() 是 15 次临时文件 + fsync（长按步进器每 80ms 走一轮）。
+        self.storage.set_setting("dock_enabled", on, save=False)
         self.storage.set_setting(
             "dock_position",
-            dock.normalize_position(self.cmb_dock_pos.currentData()))
+            dock.normalize_position(self.cmb_dock_pos.currentData()), save=False)
         if ctl("chk_dock_side_grid") is not None:
             self.storage.set_setting(
-                "dock_side_grid", bool(self.chk_dock_side_grid.isChecked()))
+                "dock_side_grid", bool(self.chk_dock_side_grid.isChecked()),
+                save=False)
         if ctl("sp_dock_icon") is not None:
             self.storage.set_setting(
-                "dock_icon", int(self.sp_dock_icon.value()))
+                "dock_icon", int(self.sp_dock_icon.value()), save=False)
         if ctl("sp_dock_gap") is not None:
             self.storage.set_setting(
-                "dock_gap", int(self.sp_dock_gap.value()))
+                "dock_gap", int(self.sp_dock_gap.value()), save=False)
         if ctl("sp_dock_pad") is not None:
             self.storage.set_setting(
-                "dock_pad", int(self.sp_dock_pad.value()))
+                "dock_pad", int(self.sp_dock_pad.value()), save=False)
         if ctl("sp_dock_hover") is not None:
             self.storage.set_setting(
-                "dock_hover_pct", int(self.sp_dock_hover.value()))
+                "dock_hover_pct", int(self.sp_dock_hover.value()), save=False)
         if ctl("sld_dock_alpha") is not None:
             self.storage.set_setting(
-                "dock_alpha", round(int(self.sld_dock_alpha.value()) / 100.0, 4))
+                "dock_alpha",
+                round(int(self.sld_dock_alpha.value()) / 100.0, 4), save=False)
         mode = None
         if ctl("cmb_dock_radius") is not None:
             mode = dock.normalize_radius_mode(self.cmb_dock_radius.currentData())
-            self.storage.set_setting("dock_radius_mode", mode)
+            self.storage.set_setting("dock_radius_mode", mode, save=False)
         if ctl("sld_dock_radius") is not None:
             self.storage.set_setting(
-                "dock_radius", int(self.sld_dock_radius.value()))
+                "dock_radius", int(self.sld_dock_radius.value()), save=False)
         if ctl("chk_dock_hover") is not None:
             self.storage.set_setting("dock_hover",
-                                     bool(self.chk_dock_hover.isChecked()))
+                                     bool(self.chk_dock_hover.isChecked()),
+                                     save=False)
         if ctl("chk_dock_dot") is not None:
             self.storage.set_setting("dock_dot",
-                                     bool(self.chk_dock_dot.isChecked()))
+                                     bool(self.chk_dock_dot.isChecked()),
+                                     save=False)
         if ctl("sld_dock_border") is not None:
             self.storage.set_setting(
-                "dock_border_width", int(self.sld_dock_border.value()))
+                "dock_border_width", int(self.sld_dock_border.value()),
+                save=False)
         if ctl("chk_dock_border_auto") is not None:
             self._dock_border_color = (
                 "" if self.chk_dock_border_auto.isChecked()
                 else str(getattr(self, "_dock_border_color", "") or ""))
             self.storage.set_setting("dock_border_color",
-                                     self._dock_border_color)
+                                     self._dock_border_color, save=False)
         if ctl("chk_dock_liquid") is not None:
+            # 开关显示的是原键（`dock_flag`），这里写回同值不会漂移
             self.storage.set_setting("liquid_dock",
-                                     bool(self.chk_dock_liquid.isChecked()))
+                                     bool(self.chk_dock_liquid.isChecked()),
+                                     save=False)
         self.storage.save()
         # 关掉 Dock 时，子控件一并禁用（不留"能点但无效"的旋钮）
         for name in ("cmb_dock_pos", "sp_dock_icon", "sp_dock_gap",
@@ -966,6 +1009,20 @@ class SettingsDialog(QDialog):
         self.storage.save()
         i18n.set_language(self.storage)
         self._restart_ui()
+
+    def _reload_language(self):
+        """按 storage 重解析界面语言（v15g）。
+
+        `reset_settings()` / `import_state()` 会直接改掉 `language` 键，但
+        `i18n` 的运行态只由语言下拉驱动（`set_language` 全仓只有那一处
+        调用）。于是重置/导入之后会出现「storage 说 auto、界面还是英文」，
+        而且下拉的选中项没变、不会再发 `currentIndexChanged`——用户点不动
+        也修不回来。任何批量改配置的入口都要过这里。
+        """
+        try:
+            i18n.set_language(self.storage)
+        except Exception:        # noqa: BLE001 —— 语言表坏了不该带崩设置窗
+            pass
 
     def _restart_ui(self):
         """按当前语言重建整个设置窗（托盘菜单在弹出时自建，无需通知）。"""
@@ -1118,9 +1175,11 @@ class SettingsDialog(QDialog):
 
         # v14 反馈 10：液态玻璃 = 一种配色（和"不透明度"互斥）。
         # 开着时条带背景就是折射出来的壁纸，不透明度没有意义 → 置灰。
+        # v15g：这里读**原键**（用户意图），不读派生值 surface_enabled()。
+        # 读派生值时，总闸一关开关就显示"关"，用户动一下 Dock 的别的项就
+        # 把那个 False 写回 liquid_dock——总闸再打开 Dock 也不液态了。
         self.chk_dock_liquid = Switch()
-        self.chk_dock_liquid.setChecked(
-            liquid_glass.surface_enabled(self.storage, "dock"))
+        self.chk_dock_liquid.setChecked(liquid_glass.dock_flag(self.storage))
         self.chk_dock_liquid.setEnabled(on)
         self.chk_dock_liquid.toggled.connect(self._apply_dock_liquid)
         self._row(c2, card2, i18n.T("settings.dock.liquid.title"),
@@ -1664,6 +1723,7 @@ class SettingsDialog(QDialog):
         self._row(c2, card2, i18n.T("settings.icons.recycle.title"),
                   self.chk_recycle,
                   i18n.T("settings.icons.recycle.hint"))
+        self._sync_cell_preview_controls()
         lay.addWidget(card2)
 
         # ---- v14j 反馈：hover 高亮与动画自定义（可关） ----
@@ -1752,6 +1812,7 @@ class SettingsDialog(QDialog):
                   anim_box, i18n.T("settings.icons.hover.anim.hint"))
         lay.addWidget(card3)
         self._sync_label_controls()
+        self._sync_hover_controls()
 
     # ---- 图标页：写设置 + 热更新窗口 ----
     def _label_style_changed(self):
@@ -1759,8 +1820,10 @@ class SettingsDialog(QDialog):
 
         与 Dock 外观同一套防抖（拖滑条时每像素都写盘会拖死主线程，
         v10 反馈 27）。窗口不可用（探针 / 替身）时只落设置。
+        v15g：真正走 250ms 合并（以前每个 `set_setting` 内部都同步
+        `save()`，这里只是再写一遍）。
         """
-        self._flush_storage()
+        self._save_timer.start(250)
         hook = getattr(self.window, "apply_label_style", None)
         if callable(hook):
             try:
@@ -1813,6 +1876,33 @@ class SettingsDialog(QDialog):
         self.sp_label_outline_w.setEnabled(outline_on)
         self.btn_label_outline_color.setEnabled(outline_on)
 
+    def _sync_hover_controls(self):
+        """图标悬停的四项只在该效果开启时有意义（v15g：与标签卡同一条规则）。"""
+        on = bool(self.chk_hover_enabled.isChecked())
+        for name in ("sld_hover_fill", "sld_hover_scale", "sld_hover_anim",
+                     "btn_hover_color"):
+            w = getattr(self, name, None)
+            if w is not None:
+                w.setEnabled(on)
+
+    def _sync_cell_preview_controls(self):
+        """落点预览框：整体关掉后，浓度 / 粗细 / 圆角 / 颜色 / 预设都不该能调。"""
+        on = bool(self.chk_cell_preview_enabled.isChecked())
+        for name in ("sld_cell_preview_fill", "sp_cell_preview_width",
+                     "sp_cell_preview_radius", "btn_cell_preview_color",
+                     "cmb_cell_preview"):
+            w = getattr(self, name, None)
+            if w is not None:
+                w.setEnabled(on)
+
+    def _sync_folder_hover_controls(self):
+        """文件夹悬停关掉后，展开 / 自动关闭两个时长滑条失去意义。"""
+        on = bool(self.chk_hover_folder.isChecked())
+        for name in ("sld_folder_open", "sld_folder_close"):
+            w = getattr(self, name, None)
+            if w is not None:
+                w.setEnabled(on)
+
     # ---------- 液态玻璃（v14 反馈 9，重做：透明底 + 边缘折射） ----------
     def _liquid_slider(self, key, slot, lo=0, hi=100, suffix="%"):
         sld = QSlider(Qt.Horizontal)
@@ -1852,8 +1942,13 @@ class SettingsDialog(QDialog):
             on and self.cmb_liquid_fps.currentData() == "custom")
 
     def _liquid_changed(self):
-        """液态玻璃任何一项改动：防抖落盘 + 推三个表面重绘。"""
-        self._flush_storage()
+        """液态玻璃任何一项改动：防抖落盘 + 推三个表面重绘。
+
+        v15g：落盘从前是"立刻写"，9 个滑条各拖一遍就是每像素一次 fsync；
+        改成与 Dock 共用 `_save_timer`（250ms 合并）。窗口隐藏时
+        `hideEvent` 还有一道兜底。
+        """
+        self._save_timer.start(250)
         hook = getattr(self.window, "apply_liquid_style", None)
         if callable(hook):
             try:
@@ -1862,50 +1957,52 @@ class SettingsDialog(QDialog):
                 pass     # 窗口正在销毁——设置已落盘，下次启动生效
 
     def _apply_liquid_master(self, on):
-        self.storage.set_setting("liquid_glass", bool(on))
+        self.storage.set_setting("liquid_glass", bool(on), save=False)
         self._sync_liquid_controls()
+        # 总闸决定 Dock 页那个开关能不能编辑 / 不透明度要不要置灰（v15g）
+        self._sync_dock_liquid()
         self._liquid_changed()
 
     def _apply_liquid_strength(self, v):
         self.lbl_liquid_strength.setText("%d%%" % v)
-        self.storage.set_setting("liquid_strength", v)
+        self.storage.set_setting("liquid_strength", v, save=False)
         self._liquid_changed()
 
     def _apply_liquid_band(self, v):
         self.lbl_liquid_band.setText(
             "%d%s" % (v, i18n.T("settings.appearance.liquid.unit_px")))
-        self.storage.set_setting("liquid_band", v)
+        self.storage.set_setting("liquid_band", v, save=False)
         self._liquid_changed()
 
     def _apply_liquid_saturation(self, v):
         self.lbl_liquid_saturation.setText("%d%%" % v)
-        self.storage.set_setting("liquid_saturation", v)
+        self.storage.set_setting("liquid_saturation", v, save=False)
         self._liquid_changed()
 
     def _apply_liquid_frost(self, v):
         self.lbl_liquid_frost.setText("%d%%" % v)
-        self.storage.set_setting("liquid_frost", v)
+        self.storage.set_setting("liquid_frost", v, save=False)
         self._liquid_changed()
 
     def _apply_liquid_aberration(self, v):
         self.lbl_liquid_aberration.setText("%d%%" % v)
-        self.storage.set_setting("liquid_aberration", v)
+        self.storage.set_setting("liquid_aberration", v, save=False)
         self._liquid_changed()
 
     def _apply_liquid_rimlight(self, v):
         self.lbl_liquid_rimlight.setText("%d%%" % v)
-        self.storage.set_setting("liquid_rimlight", v)
+        self.storage.set_setting("liquid_rimlight", v, save=False)
         self._liquid_changed()
 
     def _apply_liquid_fps_mode(self, *_):
         mode = self.cmb_liquid_fps.currentData()
         if mode:
-            self.storage.set_setting("liquid_fps_mode", str(mode))
+            self.storage.set_setting("liquid_fps_mode", str(mode), save=False)
         self.sp_liquid_fps.setEnabled(mode == "custom")
         self._liquid_changed()
 
     def _apply_liquid_fps_custom(self, v):
-        self.storage.set_setting("liquid_fps_custom", int(v))
+        self.storage.set_setting("liquid_fps_custom", int(v), save=False)
         self._liquid_changed()
 
     def _reset_liquid(self):
@@ -1991,35 +2088,36 @@ class SettingsDialog(QDialog):
         self._label_style_changed()
 
     def _apply_label_color(self, *_):
-        self.storage.set_setting("label_color", self._label_color)
+        self.storage.set_setting("label_color", self._label_color, save=False)
         self._label_style_changed()
 
     def _apply_label_bold(self, on):
-        self.storage.set_setting("label_bold", bool(on))
+        self.storage.set_setting("label_bold", bool(on), save=False)
         self._label_style_changed()
 
     def _apply_label_shadow(self, on):
-        self.storage.set_setting("label_shadow", bool(on))
+        self.storage.set_setting("label_shadow", bool(on), save=False)
         self._sync_label_controls()
         self._label_style_changed()
 
     def _apply_label_shadow_alpha(self, v):
         self.lbl_label_shadow.setText("%d%%" % int(v))
-        self.storage.set_setting("label_shadow_alpha", int(v))
+        self.storage.set_setting("label_shadow_alpha", int(v), save=False)
         self._label_style_changed()
 
     def _apply_label_outline(self, on):
-        self.storage.set_setting("label_outline", bool(on))
+        self.storage.set_setting("label_outline", bool(on), save=False)
         self._sync_label_controls()
         self._label_style_changed()
 
     def _apply_label_outline_w(self, v):
-        self.storage.set_setting("label_outline_width", int(v))
+        self.storage.set_setting("label_outline_width", int(v), save=False)
         self._label_style_changed()
 
     def _apply_cell_preview_enabled(self, on: bool):
         """落点指示框整体开关（关闭 = 拖动时不画预览框）。"""
         self.storage.set_setting("cell_preview_enabled", bool(on))
+        self._sync_cell_preview_controls()
 
     def _apply_cell_preview_preset(self, idx):
         key = self.cmb_cell_preview.currentData()
@@ -2070,21 +2168,21 @@ class SettingsDialog(QDialog):
 
     def _apply_cell_preview_fill(self, v):
         self.lbl_cell_preview_fill.setText("%d%%" % int(v))
-        self.storage.set_setting("cell_preview_fill", int(v))
+        self.storage.set_setting("cell_preview_fill", int(v), save=False)
         self._label_style_changed()
 
     def _apply_cell_preview_width(self, v):
-        self.storage.set_setting("cell_preview_width", int(v))
+        self.storage.set_setting("cell_preview_width", int(v), save=False)
         self._label_style_changed()
 
     def _apply_cell_preview_radius(self, v):
-        self.storage.set_setting("cell_preview_radius", int(v))
+        self.storage.set_setting("cell_preview_radius", int(v), save=False)
         self._label_style_changed()
 
     def _apply_label_font(self, v):
         """图标字号缩放（v14q）：写键 + 走标签热更新链（不重建图标）。"""
         self.lbl_label_font.setText("%d%%" % v)
-        self.storage.set_setting("label_font_scale", int(v))
+        self.storage.set_setting("label_font_scale", int(v), save=False)
         self._label_style_changed()
 
     def _apply_recycle_delete(self, on):
@@ -2110,6 +2208,10 @@ class SettingsDialog(QDialog):
         # 控件跟着回位（blockSignals：重置不该再触发一轮 apply）
         self._label_color = d.color.name()
         self._sync_label_color_btn()
+        # v15g：描边色的**样本 + 按钮**也要回位。少这一步时按钮仍写着
+        # 用户选的红，实际描边已是黑；接着点按钮取色盘还从红起跳。
+        self._label_outline_color = d.outline_color.name()
+        self._sync_outline_color_btn()
         for w, v in ((self.chk_label_bold, d.bold),
                      (self.chk_label_shadow, d.shadow),
                      (self.chk_label_outline, d.outline)):
@@ -2171,7 +2273,7 @@ class SettingsDialog(QDialog):
 
     # ---- v14j：hover 高亮与动画 ----
     def _icon_hover_changed(self):
-        self._flush_storage()
+        self._save_timer.start(250)      # 合并落盘（v15g）
         hook = getattr(self.window, "apply_hover_style", None)
         if callable(hook):
             try:
@@ -2181,21 +2283,22 @@ class SettingsDialog(QDialog):
 
     def _apply_icon_hover_enabled(self, on):
         self.storage.set_setting("icon_hover_enabled", bool(on))
+        self._sync_hover_controls()
         self._icon_hover_changed()
 
     def _apply_hover_fill(self, v):
         self.lbl_hover_fill.setText("%d%%" % v)
-        self.storage.set_setting("icon_hover_fill", v)
+        self.storage.set_setting("icon_hover_fill", v, save=False)
         self._icon_hover_changed()
 
     def _apply_hover_scale(self, v):
         self.lbl_hover_scale.setText("%d%%" % v)
-        self.storage.set_setting("icon_hover_scale", v)
+        self.storage.set_setting("icon_hover_scale", v, save=False)
         self._icon_hover_changed()
 
     def _apply_hover_anim(self, v):
         self.lbl_hover_anim.setText("%dms" % v)
-        self.storage.set_setting("icon_hover_anim", v)
+        self.storage.set_setting("icon_hover_anim", v, save=False)
         self._icon_hover_changed()
 
     def _sync_hover_color_btn(self):
@@ -2418,6 +2521,7 @@ class SettingsDialog(QDialog):
         cl.addWidget(self.lbl_folder_close)
         self._row(c, card, i18n.T("settings.folders.close_ms.title"),
                   cbox, i18n.T("settings.folders.close_ms.hint"))
+        self._sync_folder_hover_controls()
         lay.addWidget(card)
 
         # v14u：大文件夹改 per-folder（右键「放大/缩小」），全局开关退役；
@@ -2715,15 +2819,28 @@ class SettingsDialog(QDialog):
                 t.stop()                            # 忍够了：立刻给一次反馈
                 self._grid_wait.restart()
                 self._refresh_grid()
+                self._after_grid_rebuilt()
                 return
             t.start(self.GRID_REFRESH_DEBOUNCE)     # 重启 = 纯防抖语义
             return
         self._grid_wait.restart()
         t.start(self.GRID_REFRESH_DEBOUNCE)
 
+    def _after_grid_rebuilt(self):
+        """几何落地**之后**的回读：步进器显示值 / 原点显示值（v15g）。
+
+        单一入口——`_schedule_grid_refresh` 的两条路径（防抖超时立刻落地、
+        定时器到点落地）都必须经过这里，否则"长按连步超过 220ms"那条路
+        又会把用户输入弹回旧值。
+        """
+        self._refresh_grid_spins()
+        self._sync_origin_controls()
+
     def _on_grid_debounced(self):
         self._grid_wait.restart()
         self._refresh_grid()
+        # 快照此刻必然已是新值，回读才与桌面一致（v15g）
+        self._after_grid_rebuilt()
 
     def _apply_autostart(self, checked):
         autostart.set_enabled(bool(checked))
@@ -2805,23 +2922,34 @@ class SettingsDialog(QDialog):
         if sld is not None:
             sld.setEnabled(tier == "custom")
 
+    def _ask_yes_no(self, title_key, text_key, info_key, yes_key) -> bool:
+        """统一的二次确认框（默认「否」）。
+
+        抽成方法是为了**可替换**：测试直接打桩返回 True，不再去 patch
+        `QMessageBox.exec`——绕过 exec 的 QMessageBox 在析构时会让进程
+        以 0xC0000409 退出（Windows 上 1/3 概率，判据看退出码就成假失败）。
+        """
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle(i18n.T(title_key))
+        box.setText(i18n.T(text_key))
+        box.setInformativeText(i18n.T(info_key))
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.button(QMessageBox.Yes).setText(i18n.T(yes_key))
+        box.button(QMessageBox.No).setText(i18n.T("button.cancel"))
+        return box.exec() == QMessageBox.Yes
+
     def _reset_all_settings(self):
         """全部设置恢复出厂（v14s）：二次确认 -> reset -> 应用 -> 重开面板。
 
         面板控件全是构造时读值的一次性快照，逐个回填既繁琐又易漏——
         直接关掉重开（单例重建），所有控件自然显示默认值。
         """
-        from PySide6.QtWidgets import QMessageBox
-        box = QMessageBox(self)
-        box.setWindowTitle(i18n.T("settings.advanced.reset.title"))
-        box.setText(i18n.T("settings.advanced.reset.confirm"))
-        box.setInformativeText(i18n.T("settings.advanced.reset.confirm_info"))
-        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        box.setDefaultButton(QMessageBox.No)
-        box.button(QMessageBox.Yes).setText(
-            i18n.T("settings.advanced.reset.yes"))
-        box.button(QMessageBox.No).setText(i18n.T("button.cancel"))
-        if box.exec() != QMessageBox.Yes:
+        if not self._ask_yes_no("settings.advanced.reset.title",
+                                "settings.advanced.reset.confirm",
+                                "settings.advanced.reset.confirm_info",
+                                "settings.advanced.reset.yes"):
             return
         try:
             self.storage.reset_settings()
@@ -2835,6 +2963,10 @@ class SettingsDialog(QDialog):
                 autostart.set_enabled(False)
         except Exception:        # noqa: BLE001
             pass
+        # v15g：`language` 也回到 auto 了，但界面语言的运行态只由语言下拉
+        # 驱动——不重解析就是"storage 说自动、界面还是英文"，且下拉选中项
+        # 没变不会再发信号，用户无法自愈（重启才一致）。
+        self._reload_language()
         self._flush_storage()
         # 推运行态：把散落在各分页的"改完即生效"钩子按依赖顺序打一遍
         # （与 _FakeWin 契约一致：缺了就跳过，不硬依赖）
@@ -2887,9 +3019,11 @@ class SettingsDialog(QDialog):
         反馈 1（2026-10-21）：滑条**断触**的根因见 `_schedule_grid_refresh`
         ——每像素一次全桌面重建。这里只写值 + 刷标签，重建交给防抖定时器。
         """
-        self.storage.apply_icon_fit(int(value) / 100.0, tier="custom")
+        self.storage.apply_icon_fit(int(value) / 100.0, tier="custom",
+                                    save=False)
         self._refresh_icon_labels()
         self._schedule_grid_refresh()
+        self._save_timer.start(250)      # 每像素一次 fsync -> 合并（v15g）
 
     def _apply_match_native(self, checked):
         self.storage.set_setting("icon_match_native", bool(checked))
@@ -2932,8 +3066,7 @@ class SettingsDialog(QDialog):
             return
         self.storage.set_setting("grid_cols", int(value))
         self.storage.compact_layout()
-        self._schedule_grid_refresh()
-        self._refresh_grid_spins()
+        self._schedule_grid_refresh()      # 重建 + 回读步进器都在防抖回调里
 
     def _apply_rows(self, value):
         if getattr(self, "_grid_syncing", False):
@@ -2942,7 +3075,6 @@ class SettingsDialog(QDialog):
             return
         self.storage.set_setting("grid_rows", int(value))
         self._schedule_grid_refresh()
-        self._refresh_grid_spins()
 
     def _apply_auto_columns(self, checked):
         auto = bool(checked)
@@ -3025,8 +3157,7 @@ class SettingsDialog(QDialog):
         self.storage.set_grid_origin("manual",
                                      int(self.sp_ox.value()),
                                      int(self.sp_oy.value()))
-        self._schedule_grid_refresh()
-        self._sync_origin_controls()
+        self._schedule_grid_refresh()      # 回读在防抖回调里（v15g）
 
     def _reset_grid_origin(self):
         """重置网格位置：两键一起清空 -> 回居中（与桌面右键同一入口语义）。"""
@@ -3158,7 +3289,7 @@ class SettingsDialog(QDialog):
             h.addWidget(lab)
             cmb = ComboBox()
             for value, text in page_rules.MODE_LABELS:
-                cmb.addItem(i18n.TL("page_rules." + value, text), value)
+                cmb.addItem(i18n.TL(page_rules.label_key(value), text), value)
             cur = page_rules.rule_of(self.storage, page)
             idx = cmb.findData(cur)
             cmb.setCurrentIndex(max(0, idx))
@@ -3298,17 +3429,20 @@ class SettingsDialog(QDialog):
     def _apply_folder_hover(self, checked):
         """文件夹悬停自动展开（v14 反馈 1）：纯设置项，图标每次悬停现读。"""
         self.storage.set_setting("folder_hover_expand", bool(checked))
+        self._sync_folder_hover_controls()
         self._flush_storage()
 
     def _apply_folder_open(self, v):
         """悬停自动展开驻留（v14u）：下次悬停即生效。"""
         self.lbl_folder_open.setText("%dms" % v)
-        self.storage.set_setting("folder_hover_open_ms", int(v))
+        self.storage.set_setting("folder_hover_open_ms", int(v), save=False)
+        self._save_timer.start(250)
 
     def _apply_folder_close(self, v):
         """悬停展开后自动关闭时长（v14u）：对已开弹窗即时生效。"""
         self.lbl_folder_close.setText("%dms" % v)
-        self.storage.set_setting("folder_auto_close_ms", int(v))
+        self.storage.set_setting("folder_auto_close_ms", int(v), save=False)
+        self._save_timer.start(250)
         popup = getattr(self, "_popup", None)
         if popup is not None and popup._opened_by_hover:
             popup.set_opened_by_hover(True)
@@ -3402,6 +3536,8 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, i18n.T("backup.import.fail.title"),
                                 str(exc))
             return
+        # 备份里的 language 可能与当前不同 —— 面板下面就要按新值重建（v15g）
+        self._reload_language()
         # 运行态：优先窗口的整份重载入口；最小桩（测试）退化为钩子链
         reload_fn = getattr(self.window, "reload_from_storage", None)
         if callable(reload_fn):

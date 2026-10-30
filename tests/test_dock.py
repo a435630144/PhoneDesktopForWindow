@@ -639,8 +639,8 @@ def main():
           abs(float(st25.get_setting("dock_alpha")) - 0.70) < 1e-6,
           "%s" % st25.get_setting("dock_alpha"))
     check("D25f 落盘走 250ms 去抖（定时器在跑）",
-          dlg25._dock_save_timer.isActive(),
-          "active=%s" % dlg25._dock_save_timer.isActive())
+          dlg25._save_timer.isActive(),
+          "active=%s" % dlg25._save_timer.isActive())
     dlg25.sp_dock_icon.setValue(40)
     check("D25g 改图标尺寸仍要重排（外观路径不背这个锅）",
           fw25.layout_calls > base25, "layout=%d" % fw25.layout_calls)

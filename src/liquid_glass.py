@@ -216,6 +216,18 @@ def master_enabled(storage) -> bool:
     return _flag(_get(storage, "liquid_glass", True), True)
 
 
+def dock_flag(storage) -> bool:
+    """Dock 自己的液态开关（**不看总闸**）。
+
+    v15g：设置面板要显示的是"用户对这个表面的意图"，而 `surface_enabled`
+    是"此刻是否真的生效"（总闸一票否决）。两者混用会写坏配置——面板用
+    派生值初始化，用户一动 Dock 的别的项，`_apply_dock` 就把那个派生的
+    False 写回原键，于是总闸重新打开后 Dock 再也不液态。
+    生效判定仍然只走 `surface_enabled()`。
+    """
+    return _flag(_get(storage, "liquid_dock", True), True)
+
+
 def in_motion() -> bool:
     """整页滑动中（翻页动画）——折射贴图允许"跟着表面走"。
 
@@ -247,7 +259,7 @@ def surface_enabled(storage, surface: str) -> bool:
     if not master_enabled(storage):
         return False
     if surface == "dock":
-        return _flag(_get(storage, "liquid_dock", True), True)
+        return dock_flag(storage)
     return True
 
 

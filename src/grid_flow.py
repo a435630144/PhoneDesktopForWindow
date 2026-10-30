@@ -117,7 +117,14 @@ def big_extra_cells(entry, cols: int):
 
     右边贴边（col+1 >= cols）放不下 2×2 时返回 None——pack 时跳到
     下一行再放。
+
+    v15h：**必须先判 `big`**。旧实现只看 `type == "folder"`，于是普通
+    文件夹也被当成 2×2——`folder_extra_cells()` 给每个普通文件夹登记
+    3 个派生格，`first_free_cell()` 跳过它们，桌面布局里每个文件夹
+    右/下永远空三格（用户看到的是"图标排布有洞"）。
     """
+    if not bool(entry.get("big")):
+        return None
     col = int(entry.get("col", 0) or 0)
     row = int(entry.get("row", 0) or 0)
     if col + 1 >= max(1, int(cols)):
@@ -1677,14 +1684,20 @@ def cell_by_overlap(storage, rect) -> Cell:
 
 
 def first_free_cell_in_page(storage, page: int):
-    """当前页内第一个空格（列优先扫描；占用 = 图标 + 组件占位）。
+    """当前页内第一个空格（列优先扫描；占用 = 图标 + 组件 + 大瓷砖 + Dock 禁放）。
 
     当前页满返回 None（调用方回退全局第一个空格）。供「添加应用」
     类操作把新条目放进用户眼前这一页（指导文档 §7-M6 落点限页）。
+
+    v15h：占用集合必须与 `storage.first_free_cell()` **完全同源**——
+    旧实现漏传 `storage`（`occupied_cells` 于是不追加大文件夹派生格），
+    也漏了 Dock 禁放格：左上角有 2×2 瓷砖时，新图标被塞进 `(1,0)`
+    （瓷砖右半格），用户看到"新加的图标叠在文件夹上、点不动"。
     """
     cols = storage.columns
     lo, hi = page_row_range(page, rows_per_page(), 1)
-    blocked = set(occupied_cells(storage.layout, cols)) | widget_cells(storage)
+    blocked = (set(occupied_cells(storage.layout, cols, storage))
+               | widget_cells(storage) | storage._side_blocked())
     for row in range(lo, hi + 1):
         for col in range(cols):
             if (col, row) not in blocked:
@@ -1751,7 +1764,12 @@ def find_widget_slot(storage, widget: dict, page: int = None) -> Cell:
     不越页底）；缺省用运行时当前页。
     """
     cs, rs = widget_span(storage, widget)
-    blocked = widget_cells(storage)
+    # v15h：禁区 = 已有组件 ∪ 图标主格 ∪ 大瓷砖派生格 ∪ Dock 禁放格。
+    # 旧实现只有"图标主格"，组件于是能落在 2×2 瓷砖的右/下半边，
+    # 而且 `on_widget_grid_changed` 也只比主格——压上去就再也不挤开，
+    # 瓷砖右下两格里的成员永远点不到。
+    blocked = (widget_cells(storage) | folder_extra_cells(storage)
+               | storage._side_blocked())
     for e in storage.layout:
         blocked.add((int(e.get("col", 0)), int(e.get("row", 0))))
     cols = storage.columns

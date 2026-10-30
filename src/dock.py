@@ -424,20 +424,54 @@ def bar_rect(size, position, m: DockMetrics,
     return (x, y, w, h)
 
 
+def _fitted_icon_gap(m: DockMetrics, w: int, h: int, horizontal: bool) -> tuple:
+    """按条带**实际**主轴长度收紧 (icon, gap)（v15i）。
+
+    `bar_rect()` 早就会把条带长度夹到屏幕宽/高，但 `item_rect()` 以前仍按
+    `m.icon + m.gap` 累加——两者没有同一个上限，条带被夹短时后半段图标
+    画到窗口外：看不见、hover 不放大、点了没反应、也拖不出来。触发的都是
+    正常用法：Dock 放 20+ 项、左右位放 12+ 项、125% 缩放的 1920 屏。
+
+    这里让"能放几个"和"画在哪"用同一个长度：先压间距到 0，仍放不下再
+    等比缩图标（下限 24px，再小就看不清了）。正常参数下
+    `icon*n + gap*(n-1) == avail`，不会进来。
+    """
+    n = max(1, int(m.slots))
+    icon = max(1, int(m.icon))
+    gap = max(0, int(m.gap))
+    if horizontal:
+        avail = int(w) - int(m.pad_l or m.pad or 0) - int(m.pad_r or m.pad or 0)
+    else:
+        avail = int(h) - int(m.pad_t or m.pad or 0) - int(m.pad_b or m.pad or 0)
+    avail = max(icon, avail)
+    if n <= 1 or icon * n + gap * (n - 1) <= avail:
+        return icon, gap
+    gap = 0
+    if icon * n > avail:
+        icon = max(24, avail // n)
+    return icon, gap
+
+
 def item_rect(bar, position, m: DockMetrics, index: int) -> tuple:
-    """第 index 个图标的矩形（不含 hover 缩放，只算基准位）。"""
+    """第 index 个图标的矩形（不含 hover 缩放，只算基准位）。
+
+    v15i：尺寸走 `_fitted_icon_gap()`——条带被屏幕夹短时图标会收紧，
+    返回值里的宽高就是**实际**绘制边长（调用方不要再读 `m.icon`）。
+    """
     x, y, w, h = bar
     pos = normalize_position(position)
-    step = m.icon + m.gap
-    if pos in ("bottom", "top"):
+    horizontal = pos in ("bottom", "top")
+    icon, gap = _fitted_icon_gap(m, w, h, horizontal)
+    step = icon + gap
+    if horizontal:
         # 主轴起点 / 副轴落点都用**该方向**的内边距：四向内边距不是装饰，
         # 用户把"左"调到 20 就该看到图标整体右移 20，而不是条带变厚。
         ix = x + (m.pad_l or m.pad) + int(index) * step
-        iy = y + (m.pad_t if m.pad_t else (h - m.icon) // 2)
+        iy = y + (m.pad_t if m.pad_t else (h - icon) // 2)
     else:
-        ix = x + (m.pad_l if m.pad_l else (w - m.icon) // 2)
+        ix = x + (m.pad_l if m.pad_l else (w - icon) // 2)
         iy = y + (m.pad_t or m.pad) + int(index) * step
-    return (ix, iy, m.icon, m.icon)
+    return (ix, iy, icon, icon)
 
 
 def hit_index(bar, position, m: DockMetrics, count: int,
@@ -586,7 +620,27 @@ def storage_inset(storage) -> tuple:
     if pos in ("bottom", "top") and bool(storage.get_setting("dock_side_grid")):
         return (0, 0, 0, 0)
     m = metrics_for(storage)
-    return inset(True, storage.get_setting("dock_position"), m.thickness)
+    ins = list(inset(True, storage.get_setting("dock_position"), m.thickness))
+    # v15i：位置偏移把条带推向**屏幕内侧**时，被它压住的那一条也要从可用区
+    # 扣掉。`bar_rect()` 只负责把条带自己挪进去，网格仍按"贴边厚度"算，
+    # 于是最后一排图标正好压在被抬起的条带下面：看不见、点击被 Dock 窗口
+    # 吃掉（`dock_offset_y` 是公开设置项，-200~200）。
+    try:
+        off = int(storage.get_setting(
+            "dock_offset_y" if pos in ("bottom", "top") else "dock_offset_x") or 0)
+    except (TypeError, ValueError):
+        off = 0
+    extra = max(0, off)
+    if extra:
+        if pos == "bottom":
+            ins[3] += extra
+        elif pos == "top":
+            ins[1] += extra
+        elif pos == "left":
+            ins[0] += extra
+        else:
+            ins[2] += extra
+    return tuple(ins)
 
 
 def side_grid_blocked(storage) -> set:
@@ -678,6 +732,9 @@ class DockWindow(QWidget):
         super().__init__(parent)
         self.storage = storage
         self._items = load_items(storage)
+        # 上一次 add_item 被拒的原因（"dup" / "full" / "bad"）：
+        # 拖入反馈据此区分"已经在里面"和"条带满了"（v15i）
+        self.last_reject = None
         self._avail = (1920, 1080)
         self._bar = (0, 0, 0, 0)
         self._m = metrics_for(storage, len(self._items))
@@ -822,17 +879,24 @@ class DockWindow(QWidget):
         只能追加，用户拖到第 1 个位置松手却跑到最后，也是"拖不进去"的错觉源。
         """
         if not isinstance(item, dict):
+            self.last_reject = "bad"
             return False
         norm = normalize_items([item])
         if not norm:
+            self.last_reject = "bad"
             return False
         if any(i.get("target") == norm[0]["target"] for i in self._items):
+            self.last_reject = "dup"
             return False
         # v15d：满员时插入不能"挤掉末尾那条"。旧实现先插进 items 再交给
         # set_items 截断到 24——用户往中间拖一个，最后一项被静默删除，
         # 而用户以为只是"加了一个"。
+        # v15i：满员与重复都返回 False，但**原因不同**——dropEvent 以前
+        # 一律闪"重复"，用户看到"加过了"的反馈，实际是 Dock 满了。
         if len(self._items) >= DOCK_MAX_ITEMS:
+            self.last_reject = "full"
             return False
+        self.last_reject = None
         items = list(self._items)
         if index is None:
             items.extend(norm)
@@ -842,8 +906,14 @@ class DockWindow(QWidget):
         self.set_items(items)
         return True
 
-    def _flash_duplicate(self):
-        """重复拖入的提示：条带闪一下（不弹窗、不阻塞）。"""
+    def _flash_duplicate(self, reason=None):
+        """拖入被拒的提示：条带闪一下（不弹窗、不阻塞）。
+
+        `reason` 区分两种拒因（v15i）：`"full"` = 已经 24 项，得先删一个；
+        其余 = 已经在 Dock 里。旧实现只有一种闪烁，满员时用户看到的是
+        "加过了"的暗示，实际是装不下。
+        """
+        self._reject_reason = reason
         self._drop_highlight = True
         self.update()
         QTimer.singleShot(220, self._clear_highlight)
@@ -1066,28 +1136,33 @@ class DockWindow(QWidget):
         否则 hover 动画每帧都会产生新的 pixmap 缓存键）。
         """
         m = self._m
-        x, y, w, h = item_rect(self._bar, self._position, m, i)
+        x, y, iw, ih = item_rect(self._bar, self._position, m, i)
         # 条带可能比窗口本身偏移（窗口就是条带，故相对坐标减 bar 原点）
         lx = x - self._bar[0]
         ly = y - self._bar[1]
         grow = 0.0
-        lift = 0.0
+        dx = dy = 0.0
         if i == self._hover_index:
             grow = self._hover_grow()
-            # v14 反馈 5：iOS 的放大是"抬起"——图标往上飘出 Shelf 一点，
-            # 不是原地胀大。抬升量取放大增量的一半（视觉上仍以放大为主）。
-            # v15f：只有贴下边 / 贴左边的条带能往外飘（那是屏幕内的方向）；
-            # 贴上边 / 贴右边的条带抬升方向正好在窗口外，直接给 0。
-            lift = grow * 0.5 if self._position in ("bottom", "left") else 0.0
-        size = max(16, int(round((m.icon + grow) / 2.0)) * 2)
+            # v14 反馈 5：iOS 的放大是"抬起"——图标往屏幕**内侧**飘出条带
+            # 一点，不是原地胀大。抬升量取放大增量的一半。
+            # v15f：贴上边 / 贴右边的条带，抬升方向正好在窗口外，给 0。
+            # v15i：左位以前写成 `cx - lift`（朝屏幕外），随后被
+            # `_clamp_into_bar` 夹回来——表现是 hover 时图标被顶到左边框、
+            # 左右两侧 Dock 手感不一致。左位的"内侧"是 +x。
+            if self._position == "bottom":
+                dy = -grow * 0.5
+            elif self._position == "left":
+                dx = grow * 0.5
+        size = max(16, int(round((iw + grow) / 2.0)) * 2)
         shift = self._spread(i)
         horizontal = self._position in ("bottom", "top")
         if horizontal:
-            cx = lx + m.icon // 2 + shift
-            cy = ly + m.icon // 2 - lift
+            cx = lx + iw // 2 + shift + dx
+            cy = ly + ih // 2 + dy
         else:
-            cx = lx + m.icon // 2 - lift
-            cy = ly + m.icon // 2 + shift
+            cx = lx + iw // 2 + dx
+            cy = ly + ih // 2 + shift + dy
         return self._clamp_into_bar(
             QRect(int(cx - size // 2), int(cy - size // 2), size, size)), size
 
@@ -1342,9 +1417,10 @@ class DockWindow(QWidget):
             e.acceptProposedAction()
             self.storage.save()
         else:
-            # 已在 Dock 里：**也要接受**并给一次视觉反馈（旧实现 e.ignore()，
-            # 拖拽源拿不到落点、图标弹回原位，用户以为"拖不进 Dock"）
-            self._flash_duplicate()
+            # 已被拒：**也要接受**并给一次视觉反馈（旧实现 e.ignore()，
+            # 拖拽源拿不到落点、图标弹回原位，用户以为"拖不进 Dock"）。
+            # v15i：满员不再伪装成"重复"——条带闪完用户以为"加过了"。
+            self._flash_duplicate(getattr(self, "last_reject", None))
             e.acceptProposedAction()
 
     # ---------- 桌面带 ----------

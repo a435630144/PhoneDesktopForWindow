@@ -648,12 +648,17 @@ class Storage:
     def get_setting(self, key):
         return self._data["settings"].get(key, DEFAULT_SETTINGS.get(key))
 
-    def set_setting(self, key, value):
+    def set_setting(self, key, value, *, save=True):
         """写设置。**旧键 `columns` 做兼容转发**（v7 §10.3 迁移）：
 
         历史代码/测试仍会写 `columns = 6` 或 `"auto"`，v7 起列数的权威键是
         `grid_dims_mode` + `grid_cols`，这里把旧写法翻译过去，避免"写了一个
         键、读的是另一个"的语义漂移。
+
+        `save=False`（v15g）：只改内存，落盘交给调用方合并。给"连续输入
+        控件"用——拖动滑条每像素一次 `save()` 就是每像素一次临时文件 +
+        `fsync` + `replace`，设置面板的主线程会被磁盘 IO 拖住。默认行为
+        **不变**（写完立刻落盘），所有既有调用点无需改动。
         """
         self._data["settings"][key] = value
         if key == "columns":
@@ -665,7 +670,8 @@ class Storage:
                 if n is not None:
                     s["grid_cols"] = n
                     s["grid_dims_mode"] = "manual"
-        self.save()
+        if save:
+            self.save()
 
     # ---------- 接管系统桌面（v6 §7.2 唯一模式开关） ----------
     def takeover(self) -> bool:
@@ -789,13 +795,16 @@ class Storage:
                 cw = 0
         return grid_sizing.fit_for(native, int(cw or 0), "medium")
 
-    def apply_icon_fit(self, fit, tier=None):
+    def apply_icon_fit(self, fit, tier=None, *, save=True):
         """**唯一写入点**：同时写 `icon_fit` 与 `icon_tier`。
 
         `icon_tier` 供右键菜单勾选（`tier_for_fit` 反查最近预设）；
         v7 B2（反馈 9）起可以显式传 `tier="custom"`——用户手拖滑条到
         0.42/0.82 附近时，`tier_for_fit` 会反查成 small/large，但用户
         选的是「自定义」档，勾选状态必须跟着档位而不是数值。
+
+        `save=False`（v15g）：滑条每像素调用一次，落盘交给设置面板的
+        合并定时器，别每像素一次 fsync。
         """
         from . import grid_sizing
         f = grid_sizing.parse_fit(fit)
@@ -805,7 +814,8 @@ class Storage:
             s["icon_tier"] = grid_sizing.parse_tier(tier)
         else:
             s["icon_tier"] = tier_for_fit(f) or grid_sizing.DEFAULT_TIER
-        self.save()
+        if save:
+            self.save()
 
     def grid_dims_mode(self) -> str:
         """网格行列模式："auto"（默认）| "manual"。"""
@@ -1180,10 +1190,20 @@ class Storage:
                     # 小组件占位——否则可能正好落在时钟/便签的格子上，
                     # 图标与组件重叠（compact_layout 是带 widget_used 的）
                     from . import grid_flow
-                    nc, nr = self._first_free_cell(
-                        exclude_id=occ["id"],
-                        extra_used=(set(grid_flow.widget_cells(self))
-                                    | self._side_blocked()))
+                    # v15h：优先在**落点所在页**里找（旧实现从 (0,0) 全局
+                    # 扫，第 2 页上被压的图标会被扔回第 1 页、还可能落在
+                    # 大瓷砖的派生格下——用户眼里就是"图标凭空消失"）。
+                    # 页内也满时才退回全局，此时才允许跨页。
+                    slot = grid_flow.first_free_cell_in_page(
+                        self, grid_flow.page_of(int(row)))
+                    if slot is not None:
+                        nc, nr = int(slot[0]), int(slot[1])
+                    else:
+                        nc, nr = self._first_free_cell(
+                            exclude_id=occ["id"],
+                            extra_used=(set(grid_flow.widget_cells(self))
+                                        | grid_flow.folder_extra_cells(self)
+                                        | self._side_blocked()))
                     occ["col"], occ["row"] = nc, nr
         entry = {
             "id": entry_id,
