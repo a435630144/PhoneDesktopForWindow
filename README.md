@@ -4,9 +4,9 @@
 
 [English](README_EN.md) | 简体中文
 
-> 🚧 **项目处于活跃开发中**：当前已发版 **8.5.0（v15d）**。本批是**功能深度审核**——四条线（桌面与选择 / 文件夹弹窗 / 小组件 / Dock+设置）逐个复现再修，共 25 类缺陷：合并文件夹吞掉应用本体、跨页移动后切无界跳回第 1 页、框选删除看不见的图标、放大瓷砖半个在屏外、删除内置组件重启又回来、弹窗对应的文件夹解散后点 ＋ 会吞桌面图标、恢复默认清空 Dock 与天气城市、滑条调到 0 却自己变回 75%…… **115 个测试文件全绿**。问题与想法欢迎 Issues。
+> 🚧 **项目处于活跃开发中**：当前已发版 **8.5.1（v15i）**。这一版是**体验缺陷收口**——连续五个内部批次、22 类问题，每条都是先跑探针复现再改：Dock 液态开关被无关操作永久关掉、改列数后步进器弹回旧值、普通文件夹右/下永远空三格、新图标叠在 2×2 瓷砖下半格点不动、组件压在瓷砖上再也不挤开、第 2 页解散文件夹成员全丢回第 1 页、Ctrl+A 会选中屏幕外看不见的图标、Dock 放 20+ 项后半段图标直接消失、弹窗开着时删掉成员会点错应用……顺手把设置面板的滑条从**每像素一次 fsync** 改成 250ms 合并落盘。**120 个测试文件全绿**。问题与想法欢迎 Issues。
 
-[![release](https://img.shields.io/badge/release-v8.5.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-115%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.5.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-120%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -208,6 +208,14 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 更新日志
 
 > 按**安装包版本号**倒序；括号内是内部迭代标签（见 `src/version.py`，界面右键菜单底部可看构建时刻）。更多细节见 [`docs/release_notes/`](docs/release_notes/)。
+
+### 8.5.1（v15i）· 2026-10-30 体验缺陷收口：设置一致性 / 占位一致性 / Dock 边界 → [发布说明](docs/release_notes/8.5.1.md)
+
+- **设置面板**：Dock 液态开关不再被无关操作写坏（读原键 + 总闸关时禁用）；改列数/原点后步进器显示真值；「恢复默认 / 导入备份」立刻切语言；标签重置同步描边色；英文界面不再漏出「跟随全局」；三个父开关关闭后子滑条一并置灰
+- **性能**：设置面板的滑条与步进器改成 250ms 合并落盘（一次外观改动 7 次写盘 → 0 次，连续拖动 35 次 → 0 次），关面板兜底写一次
+- **桌面占位**：普通文件夹不再空占 3 格；页内寻位补齐大瓷砖派生格与 Dock 禁放格；组件压瓷砖整块让位；`add_app` 挤人留在同页；解散文件夹留在原页；挤位越页立即收编（不再被 Ctrl+A 误删）；红框落点与真实落点同源；多选按 2×2 footprint 夹紧
+- **Dock 与弹窗**：条带被屏幕夹短时图标自动收紧（20+ 项不再画到窗口外）；Dock 位置偏移计入网格可用区；满 24 项与重复的反馈分开；外部删成员后弹窗立即重建（不再点错应用）；「添加应用」名字两行不再被压掉
+- 新增 `tests/test_audit_v15g/h/i.py` 共 64 项判据，全量 120 个测试文件 + smoke 全绿
 
 ### 8.5.0（v15d）· 2026-10-29 功能深度审核：25 类缺陷收口 → [发布说明](docs/release_notes/8.5.0.md)
 

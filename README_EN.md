@@ -4,9 +4,9 @@
 
 English | [简体中文](README.md)
 
-> 🚧 **Under active development**: the latest release is **8.5.0 (v15d)** — a deep functional audit along four lines (desktop and selection / folder popup / widgets / Dock and settings), 25 classes of defects reproduced before being fixed: merging an app into a folder swallowed the app, moving items across grid pages made them jump back to page 1 in free mode, rubber-band selection deleted icons you could not see, enlarged tiles hung half off-screen, deleted built-in widgets came back after restart, dissolving a folder left its popup able to eat desktop icons, resetting settings wiped your Dock items and weather city, and sliders set to 0 silently snapped back to 75%. **115 test files green**.
+> 🚧 **Under active development**: the latest release is **8.5.1 (v15i)** — a consolidation pass over five internal batches and 22 classes of defects, each reproduced with a probe before being fixed: the Dock liquid-glass toggle was permanently switched off by unrelated edits, changing the column count snapped the spinner back to the old value, plain folders reserved three extra cells, new icons landed under a 2x2 tile, widgets could sit on a tile's derived cells forever, dissolving a folder on page 2 dumped every member back on page 1, Ctrl+A selected icons that were off-screen, the last icons of a 20+ item Dock were drawn outside the bar, and deleting a member while the popup was open made the next click launch the wrong app. Setting sliders also stopped doing one fsync per pixel (250 ms coalesced write). **120 test files green**.
 
-[![release](https://img.shields.io/badge/release-v8.5.0-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-115%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![release](https://img.shields.io/badge/release-v8.5.1-blue)](https://github.com/a435630144/PhoneDesktopForWindow/releases) ![platform](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows&logoColor=white) ![architecture](https://img.shields.io/badge/architecture-x64-lightgrey) ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white) ![PySide6](https://img.shields.io/badge/PySide6-6.10-41CD52?logo=qt&logoColor=white) ![tests](https://img.shields.io/badge/tests-120%20files%20passing-brightgreen) [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 ---
 
@@ -207,6 +207,14 @@ pwsh -File scripts/build_portable.ps1
 ## 📜 Changelog
 
 > Ordered by **installer version**, newest first; the parenthesised tag is the internal build label (see `src/version.py`, also shown at the bottom of the right-click menu). More detail in [`docs/release_notes/`](docs/release_notes/).
+
+### 8.5.1 (v15i) · 2026-10-30 experience defects: settings consistency / cell occupancy / Dock bounds → [notes](docs/release_notes/8.5.1.md)
+
+- **Settings**: the Dock liquid toggle is no longer clobbered by unrelated edits; grid/row/origin spinners show the value that actually took effect; reset and config import apply the language immediately; label reset also resets the outline colour; English UI no longer leaks a Chinese "follow global"; child sliders grey out with their parent switch
+- **Performance**: setting sliders and steppers now coalesce writes over 250 ms (one appearance edit 7 writes -> 0, a drag 35 -> 0), flushed once when the panel closes
+- **Grid occupancy**: plain folders no longer reserve three extra cells; in-page placement now knows about 2x2 derived cells and Dock-blocked cells; a widget landing on a tile makes the whole tile move; `add_app` displaces within the same page; dissolving a folder keeps its page; icons pushed to another page are culled immediately (Ctrl+A no longer selects invisible items); the drag preview cell matches the real drop cell; multi-select clamps by 2x2 footprint
+- **Dock and popups**: icons shrink to fit when the bar is clipped by the screen (a 20+ item Dock no longer draws past the window); `dock_offset` is counted in the grid's usable area; "full" and "duplicate" give different feedback; deleting a member externally rebuilds the popup immediately; two-line names in "Add app" are no longer clipped
+- New `tests/test_audit_v15g/h/i.py` with 64 assertions; all 120 test files plus smoke green
 
 ### 8.5.0 (v15d) · 2026-10-29 deep functional audit: 25 classes fixed → [notes](docs/release_notes/8.5.0.md)
 
